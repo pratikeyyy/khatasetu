@@ -1,0 +1,110 @@
+{
+  "image_filename": "khata_test_002.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:49.242232",
+    "is_synthetic": true,
+    "total_entries": 6
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Deepak Joshi",
+      "amount": 1018.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Deepak Joshi — besan, dettol sabun 1018.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Priya Patel",
+      "amount": 670.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Priya Patel — arhar dal, 5kg aata 670.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Ramesh Kumar",
+      "amount": 1000.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Ramesh Kumar — Jama / Rokad 1000.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Vikram Singh",
+      "amount": 719.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Vikram Singh — namak 719.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Sunita Gupta",
+      "amount": 1000.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Sunita Gupta — Jama / Rokad 1000.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 6,
+      "bounding_box": [
+        90,
+        357,
+        860,
+        397
+      ],
+      "customer_name": "Rajesh Sharma",
+      "amount": 200.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Rajesh Sharma — Jama / Rokad 200.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}

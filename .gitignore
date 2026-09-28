@@ -1,0 +1,81 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+service-account*.json
+firebase-credentials*.json
+google-services.json
+GoogleService-Info.plist
+
+# Database
+*.sqlite3
+*.db
+backend/khatasetu.db
+
+# Uploads and temporary media
+uploads/
+backend/uploads/
+temp/
+*.log
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+frontend/build/
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.pub/
+frontend/.packages
+frontend/android/app/build/
+frontend/ios/Pods/
+frontend/ios/.symlinks/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

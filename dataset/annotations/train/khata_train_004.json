@@ -1,0 +1,110 @@
+{
+  "image_filename": "khata_train_004.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:48.742640",
+    "is_synthetic": true,
+    "total_entries": 6
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Gopal Ji",
+      "amount": 157.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Gopal Ji — dettol sabun, surf excel 157.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Sunita Gupta",
+      "amount": 1315.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Sunita Gupta — biscuit, 2kg cheeni 1315.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Vikram Singh",
+      "amount": 58.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Vikram Singh — haldi mirchi 58.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Ramesh Kumar",
+      "amount": 189.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Ramesh Kumar — dettol sabun 189.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Mohan Lal",
+      "amount": 930.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Mohan Lal — arhar dal, chawal 10kg 930.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 6,
+      "bounding_box": [
+        90,
+        357,
+        860,
+        397
+      ],
+      "customer_name": "Suresh Verma",
+      "amount": 227.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Suresh Verma — surf excel 227.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}

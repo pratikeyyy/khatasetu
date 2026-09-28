@@ -1,0 +1,110 @@
+{
+  "image_filename": "khata_train_003.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:48.677332",
+    "is_synthetic": true,
+    "total_entries": 6
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Santosh Bhai",
+      "amount": 578.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Santosh Bhai — sarson tel 578.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Priya Patel",
+      "amount": 196.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Priya Patel — 1L tel, namak 196.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Mohan Lal",
+      "amount": 1019.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Mohan Lal — dettol sabun, arhar dal 1019.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Gopal Ji",
+      "amount": 637.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Gopal Ji — 2kg cheeni, namak 637.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Rajesh Sharma",
+      "amount": 1293.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Rajesh Sharma — arhar dal, biscuit 1293.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 6,
+      "bounding_box": [
+        90,
+        357,
+        860,
+        397
+      ],
+      "customer_name": "Manoj Tiwari",
+      "amount": 422.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Manoj Tiwari — chawal 10kg, haldi mirchi 422.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "image_filename": "khata_train_001.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:48.586451",
+    "is_synthetic": true,
+    "total_entries": 6
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Sunita Gupta",
+      "amount": 2000.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Sunita Gupta — Jama / Rokad 2000.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Anita Devi",
+      "amount": 1106.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Anita Devi — sarson tel, maggi packet 1106.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Santosh Bhai",
+      "amount": 922.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Santosh Bhai — besan 922.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Gopal Ji",
+      "amount": 1135.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Gopal Ji — besan, sarson tel 1135.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Rajesh Sharma",
+      "amount": 1065.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Rajesh Sharma — biscuit, sarson tel 1065.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 6,
+      "bounding_box": [
+        90,
+        357,
+        860,
+        397
+      ],
+      "customer_name": "Mohan Lal",
+      "amount": 633.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Mohan Lal — arhar dal, 5kg aata 633.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}

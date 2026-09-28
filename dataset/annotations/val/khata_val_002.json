@@ -1,0 +1,94 @@
+{
+  "image_filename": "khata_val_002.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:49.047825",
+    "is_synthetic": true,
+    "total_entries": 5
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Priya Patel",
+      "amount": 259.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Priya Patel — sarson tel, 2kg cheeni 259.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Anita Devi",
+      "amount": 1000.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Anita Devi — Jama / Rokad 1000.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Rajesh Sharma",
+      "amount": 1500.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Rajesh Sharma — Jama / Rokad 1500.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Manoj Tiwari",
+      "amount": 645.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Manoj Tiwari — 2kg cheeni, namak 645.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Ramesh Kumar",
+      "amount": 849.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Ramesh Kumar — chawal 10kg 849.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}

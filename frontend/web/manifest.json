@@ -1,0 +1,11 @@
+{
+  "name": "KhataSetu",
+  "short_name": "KhataSetu",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0F172A",
+  "theme_color": "#0F766E",
+  "description": "From Paper Khata to Smart Digital Khata — AI-powered Kirana ledger.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}

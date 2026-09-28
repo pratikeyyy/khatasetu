@@ -1,0 +1,94 @@
+{
+  "image_filename": "khata_train_005.jpg",
+  "image_dimensions": {
+    "width": 900,
+    "height": 1200
+  },
+  "metadata": {
+    "generated_at": "2026-09-19T13:36:48.842611",
+    "is_synthetic": true,
+    "total_entries": 5
+  },
+  "entries": [
+    {
+      "entry_id": 1,
+      "bounding_box": [
+        90,
+        107,
+        860,
+        147
+      ],
+      "customer_name": "Deepak Joshi",
+      "amount": 709.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Deepak Joshi — biscuit 709.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 2,
+      "bounding_box": [
+        90,
+        157,
+        860,
+        197
+      ],
+      "customer_name": "Anita Devi",
+      "amount": 144.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Anita Devi — surf excel 144.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 3,
+      "bounding_box": [
+        90,
+        207,
+        860,
+        247
+      ],
+      "customer_name": "Santosh Bhai",
+      "amount": 946.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Santosh Bhai — maggi packet 946.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 4,
+      "bounding_box": [
+        90,
+        257,
+        860,
+        297
+      ],
+      "customer_name": "Ramesh Kumar",
+      "amount": 2000.0,
+      "date": "2026-09-19",
+      "transaction_type": "payment",
+      "raw_transcription": "Ramesh Kumar — Jama / Rokad 2000.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    },
+    {
+      "entry_id": 5,
+      "bounding_box": [
+        90,
+        307,
+        860,
+        347
+      ],
+      "customer_name": "Mohan Lal",
+      "amount": 1289.0,
+      "date": "2026-09-19",
+      "transaction_type": "credit",
+      "raw_transcription": "Mohan Lal — besan 1289.00",
+      "is_crossed_out": false,
+      "confidence_benchmark": 1.0
+    }
+  ]
+}
