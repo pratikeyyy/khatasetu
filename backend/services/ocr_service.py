@@ -1,12 +1,10 @@
-import json
 import logging
+from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from backend.config import settings
-from backend.schemas.scan import (
-    GeminiExtractionResult,
-)
+from backend.schemas.scan import GeminiExtractionResult
 
 
 logger = logging.getLogger("KhataSetu.OCR")
@@ -16,54 +14,58 @@ KHATA_OCR_PROMPT = """
 You are KhataSetu Vision, a specialized AI for reading Indian Kirana
 (grocery/shop) handwritten paper khata ledgers and registers.
 
-Carefully examine this image of a handwritten ledger page.
+Carefully examine the provided image.
 
-Rules:
+IMPORTANT:
+- Read the actual handwritten content from the image.
+- Do NOT invent names, amounts, dates, or transactions.
+- Do NOT use example values from this prompt as actual data.
+- Extract every clearly identifiable transaction row.
+- If a field cannot be read reliably, return null.
+- Preserve Hindi, Hinglish, and English names as written.
+- Pay special attention to handwritten numbers and amounts.
 
-1. Identify all distinct transaction entries/rows.
+For each transaction entry extract:
 
-2. For each entry, extract:
+1. customer_name
+   - Customer's handwritten name.
+   - Preserve spelling.
+   - Hindi/Hinglish/English is allowed.
+   - Return null if unreadable.
 
-   - customer_name:
-     The customer's handwritten name.
-     Preserve spelling.
-     Handle Hindi, Hinglish, or English.
-     If unreadable, return null.
+2. amount
+   - Monetary amount in Indian Rupees.
+   - Return only the numeric value.
+   - Never guess missing digits.
+   - Return null if unreadable.
 
-   - amount:
-     The monetary amount in Indian Rupees.
-     Numbers only, float/int.
-     Never invent or guess missing numbers.
-     If unreadable, return null.
+3. date
+   - Date explicitly written near the transaction or in a relevant
+     column/header.
+   - Use YYYY-MM-DD when possible.
+   - If no explicit date is available, return null.
+   - Never invent a date.
 
-   - date:
-     The date if explicitly written near the entry or column header.
-     Format YYYY-MM-DD or DD/MM/YYYY.
-     If no date is written on the page or line, return null.
+4. transaction_type
+   - "credit" for Udhar / goods given on credit.
+   - "payment" for Jama / Vasool / money received.
+   - "adjustment" for an adjustment.
+   - If genuinely ambiguous, use "credit".
 
-   - transaction_type:
-     "credit" (Udhar/Naam/Gave goods on credit)
-     or
-     "payment" (Jama/Vasool/Received money)
-     or
-     "adjustment".
+5. raw_text
+   - Short exact transcription of the relevant handwritten row.
 
-     If ambiguous, default to "credit".
+6. confidence
+   - customer_name: 0.00 to 1.00
+   - amount: 0.00 to 1.00
+   - date: 0.00 to 1.00
+   - transaction_type: 0.00 to 1.00
+   - overall: 0.00 to 1.00
 
-   - raw_text:
-     The exact snippet of text detected on this line.
+7. page_notes
+   - Brief description of page readability or anything important.
 
-   - confidence:
-     A realistic estimation of confidence between 0.00 and 1.00
-     for each field:
-
-       customer_name: 0.00 to 1.00
-       amount: 0.00 to 1.00
-       date: 0.00 to 1.00
-       transaction_type: 0.00 to 1.00
-       overall: 0.00 to 1.00
-
-3. Output MUST be strictly valid JSON matching this schema:
+Return JSON matching this exact structure:
 
 {
   "entries": [
@@ -85,13 +87,10 @@ Rules:
   "page_notes": "Summary of document legibility"
 }
 
-Do NOT wrap the JSON in Markdown code fences.
-Return purely the raw JSON string.
+The example above is ONLY a schema example.
+Do not copy its values unless they are actually visible in the image.
 
-Do NOT invent numbers or names.
-
-If a line is crossed out or illegible,
-reflect that in low confidence or omit it.
+Return only structured JSON.
 """
 
 
@@ -102,103 +101,102 @@ class OCRService:
         cls,
         image_path: str,
     ) -> GeminiExtractionResult:
-        """
-        Call the real Gemini Vision API.
-
-        Production behavior:
-        - Gemini must be configured.
-        - No mock/fake OCR fallback.
-        - Any Gemini/API/JSON/schema failure is raised to the caller.
-        """
 
         if not settings.GEMINI_API_KEY:
             raise RuntimeError(
-                "Gemini Vision is not configured. "
-                "GEMINI_API_KEY is missing."
+                "Gemini Vision is not configured on the server."
+            )
+
+        image_file = Path(image_path)
+
+        if not image_file.exists():
+            raise FileNotFoundError(
+                f"OCR image not found: {image_file}"
             )
 
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
 
-            genai.configure(
+            logger.info(
+                "Starting Gemini Vision OCR. Model=%s Image=%s",
+                settings.GEMINI_MODEL,
+                image_file.name,
+            )
+
+            # Correct EXIF orientation and convert to RGB.
+            # This helps when phone cameras store rotation in EXIF metadata.
+            with Image.open(image_file) as original_image:
+                image = ImageOps.exif_transpose(original_image)
+
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+
+                # Copy the image so the file remains safely closed.
+                image_for_gemini = image.copy()
+
+            client = genai.Client(
                 api_key=settings.GEMINI_API_KEY
             )
 
-            model = genai.GenerativeModel(
-                settings.GEMINI_MODEL
+            response = client.models.generate_content(
+                model=settings.GEMINI_MODEL,
+                contents=[
+                    KHATA_OCR_PROMPT,
+                    image_for_gemini,
+                ],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=4096,
+                    response_mime_type="application/json",
+                    response_schema=GeminiExtractionResult,
+                ),
             )
 
             logger.info(
-                "Calling Gemini Vision model: %s",
-                settings.GEMINI_MODEL,
+                "Gemini Vision response received successfully."
             )
 
-            with Image.open(image_path) as img:
-                response = model.generate_content(
-                    [
-                        KHATA_OCR_PROMPT,
-                        img,
-                    ],
-                    generation_config={
-                        "temperature": 0.1,
-                        "max_output_tokens": 2048,
-                    },
+            # New SDK can return a parsed Pydantic object directly.
+            if getattr(response, "parsed", None) is not None:
+                parsed_result = response.parsed
+
+                if isinstance(
+                    parsed_result,
+                    GeminiExtractionResult,
+                ):
+                    result = parsed_result
+                else:
+                    result = GeminiExtractionResult.model_validate(
+                        parsed_result
+                    )
+
+            else:
+                raw_text = (response.text or "").strip()
+
+                if not raw_text:
+                    raise RuntimeError(
+                        "Gemini returned an empty OCR response."
+                    )
+
+                result = GeminiExtractionResult.model_validate_json(
+                    raw_text
                 )
-
-            raw_text = response.text.strip()
-
-            # Gemini sometimes returns JSON inside markdown fences.
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-
-            elif raw_text.startswith("```"):
-                raw_text = raw_text[3:]
-
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
-
-            raw_text = raw_text.strip()
-
-            if not raw_text:
-                raise RuntimeError(
-                    "Gemini returned an empty OCR response."
-                )
-
-            parsed = json.loads(raw_text)
-
-            result = GeminiExtractionResult.model_validate(
-                parsed
-            )
 
             logger.info(
-                "Gemini Vision OCR completed successfully. "
-                "Entries extracted: %d",
+                "Gemini OCR completed. Entries extracted=%d",
                 len(result.entries),
             )
 
             return result
 
-        except json.JSONDecodeError as exc:
-            logger.error(
-                "Gemini returned invalid JSON: %s",
-                exc,
-            )
-            raise RuntimeError(
-                "Gemini returned an invalid OCR response."
-            ) from exc
-
         except Exception as exc:
-            logger.error(
-                "Gemini Vision OCR failed: %s",
-                exc,
-                exc_info=True,
+            logger.exception(
+                "Gemini Vision OCR failed."
             )
 
             raise RuntimeError(
-                "Gemini Vision OCR failed. "
-                "Please check the internet connection, "
-                "Gemini API key, model configuration, "
-                "or try the scan again."
+                f"Gemini Vision OCR failed: {type(exc).__name__}"
             ) from exc
 
     @classmethod
@@ -206,25 +204,27 @@ class OCRService:
         cls,
         image_path: str,
     ) -> GeminiExtractionResult:
-        """
-        Production OCR entry point.
-
-        The scanner always uses real Gemini Vision.
-        There is intentionally no mock/fake fallback.
-        """
 
         if not settings.GEMINI_API_KEY:
             logger.error(
-                "GEMINI_API_KEY is not configured."
+                "GEMINI_API_KEY is missing."
             )
 
             raise RuntimeError(
                 "Gemini Vision is not configured on the server."
             )
 
+        if not settings.GEMINI_MODEL:
+            logger.error(
+                "GEMINI_MODEL is missing."
+            )
+
+            raise RuntimeError(
+                "Gemini model is not configured on the server."
+            )
+
         logger.info(
-            "Extracting Khata entries using real Gemini Vision "
-            "(%s)",
+            "Using REAL Gemini Vision OCR. Model=%s",
             settings.GEMINI_MODEL,
         )
 
