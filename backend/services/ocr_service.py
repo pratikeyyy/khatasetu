@@ -1,4 +1,5 @@
 import logging
+import time
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -91,10 +92,159 @@ The example above is ONLY a schema example.
 Do not copy its values unless they are actually visible in the image.
 
 Return only structured JSON.
+
+Do NOT invent names, amounts, dates, or transactions.
 """
 
 
+# Main production model.
+PRIMARY_MODEL = "gemini-3.8-flash"
+
+# Secondary stable model used only when the primary model repeatedly
+# returns a temporary 503/availability error.
+FALLBACK_MODEL = "gemini-3.7-flash"
+
+# Number of application-level attempts for the primary model.
+PRIMARY_RETRIES = 3
+
+# Delay between primary retries.
+RETRY_DELAYS = [5, 10]
+
+
 class OCRService:
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        """
+        Return True only for temporary Gemini/API availability errors.
+
+        We retry:
+        - 408 Request Timeout
+        - 429 Rate Limit
+        - 500 Internal Server Error
+        - 502 Bad Gateway
+        - 503 Service Unavailable
+        - 504 Gateway Timeout
+
+        We do NOT retry authentication, permission, malformed-request,
+        or schema errors.
+        """
+
+        status_code = getattr(exc, "status_code", None)
+
+        if status_code in {
+            408,
+            429,
+            500,
+            502,
+            503,
+            504,
+        }:
+            return True
+
+        # Some SDK exceptions expose the code differently.
+        code = getattr(exc, "code", None)
+
+        if code in {
+            408,
+            429,
+            500,
+            502,
+            503,
+            504,
+        }:
+            return True
+
+        error_text = str(exc).upper()
+
+        temporary_markers = (
+            "503",
+            "UNAVAILABLE",
+            "SERVICE_UNAVAILABLE",
+            "429",
+            "RESOURCE_EXHAUSTED",
+            "500",
+            "INTERNAL",
+            "502",
+            "BAD_GATEWAY",
+            "504",
+            "DEADLINE_EXCEEDED",
+            "408",
+            "TIMEOUT",
+        )
+
+        return any(
+            marker in error_text
+            for marker in temporary_markers
+        )
+
+    @classmethod
+    def _generate_with_model(
+        cls,
+        client,
+        model_name: str,
+        image,
+    ) -> GeminiExtractionResult:
+        """
+        Send the image to Gemini and validate the structured response.
+        """
+
+        from google.genai import types
+
+        logger.info(
+            "Calling Gemini Vision model: %s",
+            model_name,
+        )
+
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                KHATA_OCR_PROMPT,
+                image,
+            ],
+            config=types.GenerateContentConfig(
+                max_output_tokens=4096,
+                response_mime_type="application/json",
+                response_schema=GeminiExtractionResult,
+            ),
+        )
+
+        # Preferred path when the SDK returns parsed structured output.
+        parsed = getattr(response, "parsed", None)
+
+        if parsed is not None:
+
+            if isinstance(
+                parsed,
+                GeminiExtractionResult,
+            ):
+                result = parsed
+
+            else:
+                result = GeminiExtractionResult.model_validate(
+                    parsed
+                )
+
+        else:
+
+            raw_text = (response.text or "").strip()
+
+            if not raw_text:
+                raise RuntimeError(
+                    "Gemini returned an empty OCR response."
+                )
+
+            result = GeminiExtractionResult.model_validate_json(
+                raw_text
+            )
+
+        logger.info(
+            "Gemini OCR successful. Model=%s Entries=%d",
+            model_name,
+            len(result.entries),
+        )
+
+        return result
 
     @classmethod
     def _call_gemini_vision(
@@ -119,84 +269,128 @@ class OCRService:
             from google.genai import types
 
             logger.info(
-                "Starting Gemini Vision OCR. Model=%s Image=%s",
-                settings.GEMINI_MODEL,
+                "Preparing image for Gemini Vision: %s",
                 image_file.name,
             )
 
-            # Correct EXIF orientation and convert to RGB.
-            # This helps when phone cameras store rotation in EXIF metadata.
+            # Correct phone-camera EXIF rotation.
             with Image.open(image_file) as original_image:
-                image = ImageOps.exif_transpose(original_image)
+
+                image = ImageOps.exif_transpose(
+                    original_image
+                )
 
                 if image.mode != "RGB":
                     image = image.convert("RGB")
 
-                # Copy the image so the file remains safely closed.
+                # Keep a standalone copy after closing the source file.
                 image_for_gemini = image.copy()
 
             client = genai.Client(
-                api_key=settings.GEMINI_API_KEY
-            )
-
-            response = client.models.generate_content(
-                model=settings.GEMINI_MODEL,
-                contents=[
-                    KHATA_OCR_PROMPT,
-                    image_for_gemini,
-                ],
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=4096,
-                    response_mime_type="application/json",
-                    response_schema=GeminiExtractionResult,
+                api_key=settings.GEMINI_API_KEY,
+                http_options=types.HttpOptions(
+                    timeout=120000,
                 ),
             )
 
-            logger.info(
-                "Gemini Vision response received successfully."
+            # ---------------------------------------------------------
+            # ATTEMPT 1..3: PRIMARY MODEL
+            # ---------------------------------------------------------
+
+            last_exception = None
+
+            for attempt in range(
+                PRIMARY_RETRIES
+            ):
+
+                try:
+
+                    logger.info(
+                        "Gemini primary attempt %d/%d. Model=%s",
+                        attempt + 1,
+                        PRIMARY_RETRIES,
+                        PRIMARY_MODEL,
+                    )
+
+                    return cls._generate_with_model(
+                        client=client,
+                        model_name=PRIMARY_MODEL,
+                        image=image_for_gemini,
+                    )
+
+                except Exception as exc:
+
+                    last_exception = exc
+
+                    if not cls._is_retryable_error(
+                        exc
+                    ):
+                        logger.exception(
+                            "Non-retryable Gemini error."
+                        )
+                        raise
+
+                    logger.warning(
+                        "Gemini temporary error on attempt %d/%d: %s",
+                        attempt + 1,
+                        PRIMARY_RETRIES,
+                        exc,
+                    )
+
+                    if attempt < PRIMARY_RETRIES - 1:
+
+                        delay = RETRY_DELAYS[
+                            attempt
+                        ]
+
+                        logger.info(
+                            "Retrying Gemini in %d seconds...",
+                            delay,
+                        )
+
+                        time.sleep(delay)
+
+            # ---------------------------------------------------------
+            # FALLBACK MODEL
+            # ---------------------------------------------------------
+
+            logger.warning(
+                "Primary Gemini model remained unavailable. "
+                "Trying fallback model: %s",
+                FALLBACK_MODEL,
             )
 
-            # New SDK can return a parsed Pydantic object directly.
-            if getattr(response, "parsed", None) is not None:
-                parsed_result = response.parsed
+            try:
 
-                if isinstance(
-                    parsed_result,
-                    GeminiExtractionResult,
-                ):
-                    result = parsed_result
-                else:
-                    result = GeminiExtractionResult.model_validate(
-                        parsed_result
-                    )
-
-            else:
-                raw_text = (response.text or "").strip()
-
-                if not raw_text:
-                    raise RuntimeError(
-                        "Gemini returned an empty OCR response."
-                    )
-
-                result = GeminiExtractionResult.model_validate_json(
-                    raw_text
+                return cls._generate_with_model(
+                    client=client,
+                    model_name=FALLBACK_MODEL,
+                    image=image_for_gemini,
                 )
 
-            logger.info(
-                "Gemini OCR completed. Entries extracted=%d",
-                len(result.entries),
-            )
+            except Exception as fallback_exc:
 
-            return result
+                logger.exception(
+                    "Gemini fallback model also failed."
+                )
+
+                raise RuntimeError(
+                    "Gemini Vision is temporarily unavailable. "
+                    "Please try scanning again in a few moments."
+                ) from fallback_exc
+
+        except RuntimeError:
+            raise
 
         except Exception as exc:
+
             logger.exception(
                 "Gemini Vision OCR failed."
             )
 
             raise RuntimeError(
-                f"Gemini Vision OCR failed: {type(exc).__name__}"
+                f"Gemini Vision OCR failed: "
+                f"{type(exc).__name__}"
             ) from exc
 
     @classmethod
@@ -206,6 +400,7 @@ class OCRService:
     ) -> GeminiExtractionResult:
 
         if not settings.GEMINI_API_KEY:
+
             logger.error(
                 "GEMINI_API_KEY is missing."
             )
@@ -214,18 +409,11 @@ class OCRService:
                 "Gemini Vision is not configured on the server."
             )
 
-        if not settings.GEMINI_MODEL:
-            logger.error(
-                "GEMINI_MODEL is missing."
-            )
-
-            raise RuntimeError(
-                "Gemini model is not configured on the server."
-            )
-
         logger.info(
-            "Using REAL Gemini Vision OCR. Model=%s",
-            settings.GEMINI_MODEL,
+            "Starting production Gemini Vision OCR. "
+            "Primary=%s Fallback=%s",
+            PRIMARY_MODEL,
+            FALLBACK_MODEL,
         )
 
         return cls._call_gemini_vision(
