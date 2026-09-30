@@ -14,6 +14,7 @@ class Shop(Base):
     phone = Column(String(50), nullable=False)
     address = Column(Text, nullable=True)
     gstin = Column(String(50), nullable=True)  # Optional GSTIN
+    upi_id = Column(String(100), nullable=True)  # Optional UPI ID for digital payments
     currency = Column(String(10), default="INR")
     currency_symbol = Column(String(5), default="₹")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

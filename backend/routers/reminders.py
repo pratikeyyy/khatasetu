@@ -45,6 +45,7 @@ def generate_whatsapp_reminder(
         shop_name=shop.name,
         language=data.language,
         custom_note=data.custom_note,
+        upi_id=shop.upi_id,
     )
 
     # Save to Reminder history

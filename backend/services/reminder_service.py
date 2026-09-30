@@ -27,6 +27,7 @@ class ReminderService:
         shop_name: str,
         language: str = "hinglish",
         custom_note: str = None,
+        upi_id: str = None,
     ) -> str:
         formatted_amount = f"{amount:,.2f}"
 
@@ -37,8 +38,13 @@ class ReminderService:
         else:  # hinglish (Default for Kirana)
             msg = f"Namaste {customer_name} ji, aapke khate mein ₹{formatted_amount} baki hain. Kripya suvidha anusar payment kar dein. Dhanyavaad — {shop_name}"
 
+        if upi_id and upi_id.strip():
+            pn = urllib.parse.quote(shop_name.strip())
+            upi_link = f"upi://pay?pa={upi_id.strip()}&pn={pn}&am={amount:.2f}&cu=INR&tn=Khata%20Payment"
+            msg += f"\n\nUPI Payment Link:\n{upi_link}"
+
         if custom_note and custom_note.strip():
-            msg += f"\nNote: {custom_note.strip()}"
+            msg += f"\n\nNote: {custom_note.strip()}"
 
         return msg
 
@@ -51,6 +57,7 @@ class ReminderService:
         shop_name: str,
         language: str = "hinglish",
         custom_note: str = None,
+        upi_id: str = None,
     ) -> Dict[str, Any]:
         """
         Creates a free, direct WhatsApp deep link.
@@ -63,6 +70,7 @@ class ReminderService:
             shop_name=shop_name,
             language=language,
             custom_note=custom_note,
+            upi_id=upi_id,
         )
 
         encoded_text = urllib.parse.quote(message_text)

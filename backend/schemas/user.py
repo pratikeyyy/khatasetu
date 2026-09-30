@@ -68,6 +68,7 @@ class ProfileUpdate(BaseModel):
     shop_name: Optional[str] = None
     shop_address: Optional[str] = None
     gstin: Optional[str] = None
+    upi_id: Optional[str] = None
 
     @field_validator("gstin")
     @classmethod

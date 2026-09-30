@@ -16,6 +16,7 @@ class Transaction(Base):
     transaction_type = Column(String(50), nullable=False)  # CREDIT, PAYMENT, ADJUSTMENT
     date = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, index=True)
     notes = Column(Text, nullable=True)
+    payment_mode = Column(String(50), nullable=True)  # Cash, UPI, Card, Bank Transfer, Cheque, Other
     source = Column(String(50), default="MANUAL")  # MANUAL, AI_SCAN
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

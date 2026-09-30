@@ -116,6 +116,7 @@ def get_me(user: User = Depends(get_current_user), shop: Shop = Depends(get_curr
             "gstin": shop.gstin,
             "currency": shop.currency,
             "currency_symbol": shop.currency_symbol,
+            "upi_id": shop.upi_id,
         },
     }
 
@@ -138,6 +139,8 @@ def update_profile(
         shop.address = data.shop_address.strip()
     if data.gstin is not None:
         shop.gstin = data.gstin.strip().upper() if data.gstin else None
+    if data.upi_id is not None:
+        shop.upi_id = data.upi_id.strip() if data.upi_id else None
 
     db.commit()
     return {"message": "Profile updated successfully"}

@@ -60,6 +60,7 @@ def list_transactions(
             transaction_type=tx.transaction_type,
             date=tx.date,
             notes=tx.notes,
+            payment_mode=tx.payment_mode,
             source=tx.source,
             created_at=tx.created_at,
             updated_at=tx.updated_at,
@@ -133,6 +134,7 @@ def create_transaction(
         transaction_type=data.transaction_type,
         date=tx_date,
         notes=data.notes.strip() if data.notes else None,
+        payment_mode=data.payment_mode if data.transaction_type == "PAYMENT" else None,
         source="MANUAL",
     )
     db.add(tx)
@@ -153,6 +155,7 @@ def create_transaction(
             "type": tx.transaction_type,
             "customer_id": customer.id,
             "customer_name": customer.name,
+            "payment_mode": tx.payment_mode,
             "source": "MANUAL",
         }),
         change_summary=f"Manual {tx.transaction_type} of ₹{tx.amount:.2f} recorded for {customer.name}",
@@ -171,6 +174,7 @@ def create_transaction(
         transaction_type=tx.transaction_type,
         date=tx.date,
         notes=tx.notes,
+        payment_mode=tx.payment_mode,
         source=tx.source,
         created_at=tx.created_at,
         updated_at=tx.updated_at,

@@ -9,6 +9,7 @@ class TransactionBase(BaseModel):
     transaction_type: str  # CREDIT, PAYMENT, ADJUSTMENT
     date: Optional[datetime] = None
     notes: Optional[str] = None
+    payment_mode: Optional[str] = None  # Cash, UPI, Card, Bank Transfer, Cheque, Other
 
     @field_validator("amount")
     @classmethod
