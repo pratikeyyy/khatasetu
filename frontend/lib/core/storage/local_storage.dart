@@ -8,6 +8,7 @@ class LocalStorage {
   static const String _keyShopName = "shop_name";
   static const String _keyEmail = "user_email";
   static const String _keyOnboarding = "has_seen_onboarding";
+  static const String _keyRememberMe = "remember_me";
 
   static Future<void> saveAuthSession({
     required String token,
@@ -16,6 +17,7 @@ class LocalStorage {
     required String ownerName,
     required String shopName,
     required String email,
+    bool rememberMe = true,
   }) async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -25,6 +27,12 @@ class LocalStorage {
     await prefs.setString(_keyOwnerName, ownerName);
     await prefs.setString(_keyShopName, shopName);
     await prefs.setString(_keyEmail, email);
+    await prefs.setBool(_keyRememberMe, rememberMe);
+  }
+
+  static Future<bool> getRememberMe() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyRememberMe) ?? true;
   }
 
   static Future<String?> getToken() async {
@@ -118,5 +126,6 @@ class LocalStorage {
     await prefs.remove(_keyShopName);
     await prefs.remove(_keyEmail);
     await prefs.remove("user_phone");
+    await prefs.remove(_keyRememberMe);
   }
 }

@@ -4,10 +4,19 @@ class ApiConstants {
   // Configurable base URL
   // Uses 10.0.2.2 for Android emulator, localhost for web/desktop, or custom LAN IP
   static String get baseUrl {
+    const String fromEnv = String.fromEnvironment('API_URL', defaultValue: '');
+    if (fromEnv.isNotEmpty) {
+      return fromEnv;
+    }
+    
     if (kIsWeb) {
-      return "http://localhost:8000/api/v1";
+      return kReleaseMode 
+          ? "https://khatasetu.onrender.com/api/v1" 
+          : "http://localhost:8000/api/v1";
     } else if (defaultTargetPlatform == TargetPlatform.android) {
-      return "http://10.174.30.241:8000/api/v1";
+      return kReleaseMode 
+          ? "https://khatasetu.onrender.com/api/v1" 
+          : "http://10.0.2.2:8000/api/v1";
     } else {
       return "http://localhost:8000/api/v1";
     }

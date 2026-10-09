@@ -7,7 +7,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
-from backend.database import Base, engine
+from backend.database import Base, engine, SessionLocal
+from backend.services.matching_service import MatchingService
+from backend.models.shop import Shop
 from backend.routers import (
     auth_router,
     shops_router,
@@ -28,11 +30,37 @@ logging.basicConfig(
 logger = logging.getLogger("KhataSetu")
 
 
+import asyncio
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Ensure DB tables exist
     logger.info("Initializing database tables...")
+    # TODO: In production, Alembic should be used for migrations.
     Base.metadata.create_all(bind=engine)
+    
+    if settings.APP_ENV == "production" and settings.JWT_SECRET == "khatasetu_super_secret_jwt_key_kirana_2026_production":
+        raise RuntimeError("CRITICAL: JWT_SECRET must be overridden in production!")
+
+    def repair_task():
+        db = SessionLocal()
+        try:
+            shop_ids = [row[0] for row in db.query(Shop.id).all()]
+            repaired = 0
+            for shop_id in shop_ids:
+                repaired += MatchingService.repair_ai_transaction_links(db, shop_id)
+            if repaired:
+                logger.info("Repaired %s AI transaction/customer links.", repaired)
+        except Exception:
+            logger.exception("AI transaction/customer repair skipped.")
+            db.rollback()
+        finally:
+            db.close()
+
+    # Run repair without blocking startup
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, repair_task)
+
     logger.info("KhataSetu backend initialized successfully.")
     yield
     # Shutdown
@@ -49,10 +77,14 @@ app = FastAPI(
 )
 
 # CORS Middleware for Flutter mobile, web, and local dev
+origins_str = os.environ.get("CORS_ORIGINS", "*")
+origins = origins_str.split(",") if origins_str else ["*"]
+allow_all = "*" in origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=origins,
+    allow_credentials=not allow_all,
     allow_methods=["*"],
     allow_headers=["*"],
 )

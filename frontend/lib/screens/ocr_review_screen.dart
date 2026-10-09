@@ -217,11 +217,37 @@ class _OcrReviewScreenState extends ConsumerState<OcrReviewScreen> {
         padding: const EdgeInsets.only(bottom: 8),
         child: Row(
           children: [
-            Container(width: 4, height: 16, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4))),
+            Container(
+              width: 4,
+              height: 16,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
             const SizedBox(width: 8),
-            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color, letterSpacing: 0.8)),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
             const SizedBox(width: 8),
-            Text("($count)", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color.withOpacity(0.8))),
+            Text(
+              "($count)",
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: color.withOpacity(0.8),
+              ),
+            ),
           ],
         ),
       );
@@ -514,10 +540,21 @@ class _EntryCardState extends ConsumerState<_EntryCard> {
           children: [
             Icon(icon, size: 14, color: AppColors.textMuted),
             const SizedBox(width: 6),
-            Text("$label: ", style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            SizedBox(
+              width: 122,
+              child: Text(
+                "$label:",
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+              ),
+            ),
+            const SizedBox(width: 6),
             Expanded(
               child: Text(
                 value,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: highlight ? FontWeight.w800 : FontWeight.w600,

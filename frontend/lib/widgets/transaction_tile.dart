@@ -15,36 +15,26 @@ class TransactionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final isCredit = transaction.transactionType.toUpperCase() == "CREDIT";
+    final isCredit = transaction.transactionType == "CREDIT";
     final amountColor = isCredit ? AppColors.creditRed : AppColors.paymentGreen;
+    final prefix = isCredit ? "-₹" : "+₹";
     final formattedDate = DateFormat("dd MMM yyyy, hh:mm a").format(transaction.date);
+    final amount = "$prefix${NumberFormat('#,##,##0.00').format(transaction.amount)}";
 
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E293B) : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-            width: 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(isDark ? 0.2 : 0.02),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppColors.divider.withOpacity(0.65)),
         ),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status Icon
             Container(
               width: 44,
               height: 44,
@@ -55,156 +45,76 @@ class TransactionTile extends StatelessWidget {
               child: Icon(
                 isCredit ? Icons.arrow_outward_rounded : Icons.arrow_downward_rounded,
                 color: amountColor,
-                size: 22,
+                size: 21,
               ),
             ),
-            const SizedBox(width: 14),
-
-            // Customer Name and Metadata
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          transaction.customerName,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: isDark ? Colors.white : const Color(0xFF0F172A),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      if (transaction.source == "AI_SCAN")
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.auto_awesome, size: 10, color: AppColors.primary),
-                              SizedBox(width: 3),
-                              Text(
-                                "AI Scan",
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.primary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
+                  Text(
+                    transaction.customerName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 4),
-                  Row(
+                  Text(
+                    formattedDate,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
                     children: [
-                      Text(
-                        formattedDate,
-                        style: const TextStyle(fontSize: 12, color: AppColors.textMuted),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: amountColor.withOpacity(0.10),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          isCredit ? "उधार दिया (Credit)" : "जमा प्राप्त (Payment)",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: amountColor),
+                        ),
                       ),
-                      if (transaction.notes != null && transaction.notes!.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        const Text("•", style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            transaction.notes!,
-                            style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontStyle: FontStyle.italic),
-                            overflow: TextOverflow.ellipsis,
+                      if (transaction.source == "AI_SCAN")
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: const Text(
+                            "AI Scan",
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.primary),
                           ),
                         ),
-                      ],
                     ],
                   ),
                 ],
               ),
             ),
-
-            // Amount and Accounting Label
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  "₹${NumberFormat('#,##,###.00').format(transaction.amount)}",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: amountColor,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: amountColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    isCredit ? "उधार दिया (Credit)" : "जमा प्राप्त (Payment)",
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: amountColor,
-                    ),
-                  ),
-                ),
-                if (!isCredit && transaction.paymentMode != null && transaction.paymentMode!.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF334155) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1),
-                        width: 0.5,
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _getPaymentModeIcon(transaction.paymentMode!),
-                          size: 10,
-                          color: isDark ? Colors.white70 : AppColors.textPrimary,
-                        ),
-                        const SizedBox(width: 3),
-                        Text(
-                          transaction.paymentMode!,
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: isDark ? Colors.white70 : AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
+            const SizedBox(width: 8),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 145),
+              child: Text(
+                amount,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: amountColor),
+              ),
             ),
           ],
         ),
       ),
     );
-  }
-
-  IconData _getPaymentModeIcon(String mode) {
-    final m = mode.toLowerCase();
-    if (m.contains("upi")) return Icons.qr_code_2_rounded;
-    if (m.contains("card")) return Icons.credit_card_rounded;
-    if (m.contains("bank")) return Icons.account_balance_rounded;
-    if (m.contains("cheque")) return Icons.receipt_long_rounded;
-    if (m.contains("cash")) return Icons.payments_outlined;
-    return Icons.payment_rounded;
   }
 }

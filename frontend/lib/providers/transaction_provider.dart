@@ -136,7 +136,8 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
   }
 
   Future<bool> addTransaction({
-    required int customerId,
+    int? customerId,
+    String? manualCustomerName,
     required double amount,
     required String transactionType,
     String? notes,
@@ -154,12 +155,53 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
       final session = await LocalStorage.getUserSession();
       final shopId = session?["shop_id"] ?? 0;
 
+      // Manual transactions may arrive with a name but no selected customer.
+      // Reuse an existing customer by name; otherwise create it automatically.
+      int? resolvedCustomerId = customerId;
+      if (resolvedCustomerId == null) {
+        final cleanName = manualCustomerName?.trim() ?? "";
+        if (cleanName.isEmpty) {
+          state = state.copyWith(
+            isLoading: false,
+            errorMessage: "Please enter a customer name.",
+          );
+          return false;
+        }
+
+        final existing = await db.query(
+          "customers",
+          where: "shop_id = ? AND LOWER(name) = LOWER(?)",
+          whereArgs: [shopId, cleanName],
+          limit: 1,
+        );
+
+        if (existing.isNotEmpty) {
+          resolvedCustomerId = existing.first["id"] as int;
+        } else {
+          resolvedCustomerId = DateTime.now().microsecondsSinceEpoch;
+          await db.insert("customers", {
+            "id": resolvedCustomerId,
+            "shop_id": shopId,
+            "name": cleanName,
+            "phone": null,
+            "address": null,
+            "notes": null,
+            "credit_balance": 0.0,
+            "total_credit": 0.0,
+            "total_payment": 0.0,
+            "transaction_count": 0,
+            "created_at": DateTime.now().toIso8601String(),
+            "updated_at": DateTime.now().toIso8601String(),
+          });
+        }
+      }
+
       final txDate = date ?? DateTime.now();
       final normalizedType = transactionType.toUpperCase();
 
       if (!force) {
         final duplicate = await checkDuplicate(
-          customerId: customerId,
+          customerId: resolvedCustomerId,
           amount: amount,
           transactionType: normalizedType,
           date: txDate,
@@ -174,17 +216,51 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
         }
       }
 
-      final customerRows = await db.query(
+      var customerRows = await db.query(
         "customers",
         where: "id = ? AND shop_id = ?",
-        whereArgs: [customerId, shopId],
+        whereArgs: [resolvedCustomerId, shopId],
         limit: 1,
       );
 
       if (customerRows.isEmpty) {
+        final cleanName = manualCustomerName?.trim() ?? "";
+        if (cleanName.isEmpty) {
+          state = state.copyWith(
+            isLoading: false,
+            errorMessage: "Customer name is required.",
+          );
+          return false;
+        }
+
+        // Keep the local transaction database in sync with the cloud customer.
+        await db.insert("customers", {
+          "id": resolvedCustomerId,
+          "shop_id": shopId,
+          "name": cleanName,
+          "phone": null,
+          "address": null,
+          "notes": null,
+          "credit_balance": 0.0,
+          "total_credit": 0.0,
+          "total_payment": 0.0,
+          "transaction_count": 0,
+          "created_at": DateTime.now().toIso8601String(),
+          "updated_at": DateTime.now().toIso8601String(),
+        });
+
+        customerRows = await db.query(
+          "customers",
+          where: "id = ? AND shop_id = ?",
+          whereArgs: [resolvedCustomerId, shopId],
+          limit: 1,
+        );
+      }
+
+      if (customerRows.isEmpty) {
         state = state.copyWith(
           isLoading: false,
-          errorMessage: "Customer not found.",
+          errorMessage: "Customer could not be created locally.",
         );
         return false;
       }
@@ -219,7 +295,7 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
         await txn.insert("transactions", {
           "id": id,
           "shop_id": shopId,
-          "customer_id": customerId,
+          "customer_id": resolvedCustomerId,
           "customer_name": customerName,
           "scan_entry_id": null,
           "amount": amount,
@@ -249,7 +325,7 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
       final newTx = TransactionModel(
         id: id,
         shopId: shopId,
-        customerId: customerId,
+        customerId: resolvedCustomerId,
         customerName: customerName,
         scanEntryId: null,
         amount: amount,

@@ -84,7 +84,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Brand Icon
                     Center(
                       child: Container(
                         width: 72,
@@ -130,8 +129,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 28),
-
-                    // Error banner
                     if (auth.errorMessage != null) ...[
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -155,8 +152,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       const SizedBox(height: 16),
                     ],
-
-                    // Email Field
                     TextField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
@@ -166,8 +161,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
-                    // Password Field
                     TextField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
@@ -181,8 +174,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-
-                    // Remember Me
                     Row(
                       children: [
                         Checkbox(
@@ -190,12 +181,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           activeColor: AppColors.primary,
                           onChanged: (val) => setState(() => _rememberMe = val ?? true),
                         ),
-                        const Text("लॉगिन याद रखें (Remember Me)", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                        const SizedBox(width: 2),
+                        const Expanded(
+                          child: Text(
+                            "लॉगिन याद रखें (Remember Me)",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
-
-                    // Login Button
                     ElevatedButton(
                       onPressed: auth.isLoading ? null : _handleLogin,
                       style: ElevatedButton.styleFrom(
@@ -208,14 +205,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               height: 20,
                               child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                             )
-                          : const Text(
-                              "खाते में लॉगिन करें (Log In)",
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+                          : const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                "खाते में लॉगिन करें (Log In)",
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+                              ),
                             ),
                     ),
                     const SizedBox(height: 12),
-
-                    // One-Tap Demo Login
                     OutlinedButton.icon(
                       onPressed: auth.isLoading
                           ? null
@@ -224,23 +222,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               _handleLogin();
                             },
                       icon: const Icon(Icons.bolt_rounded, size: 20, color: AppColors.saffron),
-                      label: const Text(
-                        "एक क्लिक डेमो लॉगिन (One-Tap Demo)",
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                      label: const Flexible(
+                        child: Text(
+                          "एक क्लिक डेमो लॉगिन (One-Tap Demo)",
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                     ),
                     const SizedBox(height: 22),
-
-                    // Register Link
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 4,
                       children: [
                         const Text(
-                          "नया खाता खोलना है? ",
+                          "नया खाता खोलना है?",
                           style: TextStyle(color: AppColors.textMuted, fontSize: 13),
                         ),
                         GestureDetector(

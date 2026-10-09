@@ -1,0 +1,2157 @@
+﻿import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
+
+import '../core/network/api_client.dart';
+import '../core/storage/local_storage.dart';
+import '../core/constants/api_constants.dart';
+
+class AuthState {
+  final bool isLoading;
+  final bool isAuthenticated;
+  final Map<String, dynamic>? user;
+  final Map<String, dynamic>? shop;
+  final String upiId;
+  final String? errorMessage;
+
+  const AuthState({
+    this.isLoading = false,
+    this.isAuthenticated = false,
+    this.user,
+    this.shop,
+    this.upiId = "",
+    this.errorMessage,
+  });
+
+  String get ownerName =>
+      user?["full_name"]?.toString() ?? "Shopkeeper";
+
+  String get email =>
+      user?["email"]?.toString() ?? "";
+
+  String get phone =>
+      user?["phone"]?.toString() ?? "";
+
+  String get shopName =>
+      shop?["name"]?.toString() ?? "My Khata";
+
+  String get shopPhone =>
+      shop?["phone"]?.toString() ?? "";
+
+  String get address =>
+      shop?["address"]?.toString() ?? "";
+
+  String get gstin =>
+      shop?["gstin"]?.toString() ?? "";
+
+  AuthState copyWith({
+    bool? isLoading,
+    bool? isAuthenticated,
+    Map<String, dynamic>? user,
+    Map<String, dynamic>? shop,
+    String? upiId,
+    String? errorMessage,
+  }) {
+    return AuthState(
+      isLoading: isLoading ?? this.isLoading,
+      isAuthenticated: isAuthenticated ?? this.isAuthenticated,
+      user: user ?? this.user,
+      shop: shop ?? this.shop,
+      upiId: upiId ?? this.upiId,
+      errorMessage: errorMessage,
+    );
+  }
+}
+
+class AuthNotifier extends StateNotifier<AuthState> {
+  AuthNotifier() : super(const AuthState());
+
+  // ============================================================
+  // SERVER DATA
+  // ============================================================
+
+  void _applyServerData(Map<String, dynamic> data) {
+    final userData = data["user"];
+    final shopData = data["shop"];
+
+    final user = userData is Map
+        ? Map<String, dynamic>.from(userData)
+        : <String, dynamic>{};
+
+    final shop = shopData is Map
+        ? Map<String, dynamic>.from(shopData)
+        : <String, dynamic>{};
+
+    final upi = shop["upi_id"]?.toString() ?? "";
+
+    state = state.copyWith(
+      isLoading: false,
+      isAuthenticated: true,
+      user: user,
+      shop: shop,
+      upiId: upi,
+      errorMessage: null,
+    );
+  }
+
+  // ============================================================
+  // ERROR MESSAGE
+  // ============================================================
+
+  String _getErrorMessage(DioException e, String fallback) {
+    final data = e.response?.data;
+
+    if (data is Map && data["detail"] != null) {
+      return data["detail"].toString();
+    }
+
+    if (e.response?.statusCode == 401) {
+      return "Invalid email or password.";
+    }
+
+    if (e.response?.statusCode == 422) {
+      return "Please check the entered details.";
+    }
+
+    if (e.response?.statusCode == 500) {
+      return "Server error. Please try again.";
+    }
+
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return "Server connection timed out. Please check your internet.";
+    }
+
+    if (e.type == DioExceptionType.connectionError) {
+      return "Cannot connect to KhataSetu server. Check your internet.";
+    }
+
+    return e.message ?? fallback;
+  }
+
+  // ============================================================
+  // LOGIN
+  // ============================================================
+
+  Future<bool> login(
+    String email,
+    String password, {
+    bool rememberMe = true,
+  }) async {
+    state = state.copyWith(
+      isLoading: true,
+      errorMessage: null,
+    );
+
+    try {
+      // Always remove stale/old session before a fresh login.
+      await LocalStorage.clearSession();
+
+      final cleanEmail = email.trim().toLowerCase();
+
+      final response = await ApiClient.client.post(
+        ApiConstants.login,
+        data: {
+          "email": cleanEmail,
+          "password": password,
+        },
+      );
+
+      final responseData = response.data;
+
+      if (responseData is! Map) {
+        throw Exception("Invalid server response.");
+      }
+
+      final data = Map<String, dynamic>.from(responseData);
+
+      final token = data["access_token"]?.toString();
+
+      if (token == null || token.isEmpty) {
+        throw Exception("Server did not return an access token.");
+      }
+
+      // Save REAL JWT.
+      await LocalStorage.saveAuthSession(
+        token: token,
+        userId: int.tryParse(
+              data["user_id"]?.toString() ?? "",
+            ) ??
+            0,
+        shopId: int.tryParse(
+              data["shop_id"]?.toString() ?? "",
+            ) ??
+            0,
+        ownerName: data["owner_name"]?.toString() ?? "Shopkeeper",
+        shopName: data["shop_name"]?.toString() ?? "My Khata",
+        email: data["email"]?.toString() ?? cleanEmail,
+      );
+
+      // Verify token with backend.
+      final meResponse = await ApiClient.client.get(
+        ApiConstants.me,
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      if (meResponse.data is! Map) {
+        throw Exception("Invalid profile response from server.");
+      }
+
+      final meData =
+          Map<String, dynamic>.from(meResponse.data as Map);
+
+      _applyServerData(meData);
+
+      return true;
+    } on DioException catch (e) {
+      await LocalStorage.clearSession();
+
+      state = AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage: _getErrorMessage(e, "Login failed."),
+      );
+
+      return false;
+    } catch (e) {
+      await LocalStorage.clearSession();
+
+      state = AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage: e.toString().replaceFirst("Exception: ", ""),
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // REGISTER
+  // ============================================================
+
+  Future<bool> register({
+    required String email,
+    required String password,
+    required String ownerName,
+    required String shopName,
+    String? phone,
+    String? shopAddress,
+    String? gstin,
+  }) async {
+    state = state.copyWith(
+      isLoading: true,
+      errorMessage: null,
+    );
+
+    try {
+      await LocalStorage.clearSession();
+
+      final cleanEmail = email.trim().toLowerCase();
+
+      final response = await ApiClient.client.post(
+        ApiConstants.register,
+        data: {
+          "email": cleanEmail,
+          "password": password,
+          "owner_name": ownerName.trim(),
+          "shop_name": shopName.trim(),
+          "phone": phone?.trim() ?? "",
+          "shop_address": shopAddress?.trim() ?? "",
+          "gstin": gstin?.trim() ?? "",
+        },
+      );
+
+      if (response.data is! Map) {
+        throw Exception("Invalid server response.");
+      }
+
+      final data =
+          Map<String, dynamic>.from(response.data as Map);
+
+      final token = data["access_token"]?.toString();
+
+      if (token == null || token.isEmpty) {
+        throw Exception("Server did not return an access token.");
+      }
+
+      await LocalStorage.saveAuthSession(
+        token: token,
+        userId: int.tryParse(
+              data["user_id"]?.toString() ?? "",
+            ) ??
+            0,
+        shopId: int.tryParse(
+              data["shop_id"]?.toString() ?? "",
+            ) ??
+            0,
+        ownerName: data["owner_name"]?.toString() ?? ownerName,
+        shopName: data["shop_name"]?.toString() ?? shopName,
+        email: data["email"]?.toString() ?? cleanEmail,
+      );
+
+      final meResponse = await ApiClient.client.get(
+        ApiConstants.me,
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      if (meResponse.data is! Map) {
+        throw Exception("Invalid profile response from server.");
+      }
+
+      final meData =
+          Map<String, dynamic>.from(meResponse.data as Map);
+
+      _applyServerData(meData);
+
+      return true;
+    } on DioException catch (e) {
+      await LocalStorage.clearSession();
+
+      state = AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage:
+            _getErrorMessage(e, "Registration failed."),
+      );
+
+      return false;
+    } catch (e) {
+      await LocalStorage.clearSession();
+
+      state = AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+        errorMessage:
+            e.toString().replaceFirst("Exception: ", ""),
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // CHECK SAVED SESSION
+  // ============================================================
+
+  Future<bool> checkSavedSession() async {
+    state = state.copyWith(
+      isLoading: true,
+      errorMessage: null,
+    );
+
+    try {
+      final token = await LocalStorage.getToken();
+
+      if (token == null ||
+          token.isEmpty ||
+          token.startsWith("offline_")) {
+        await LocalStorage.clearSession();
+
+        state = const AuthState(
+          isLoading: false,
+          isAuthenticated: false,
+        );
+
+        return false;
+      }
+
+      final response = await ApiClient.client.get(
+        ApiConstants.me,
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      if (response.data is! Map) {
+        throw Exception("Invalid session response.");
+      }
+
+      final data =
+          Map<String, dynamic>.from(response.data as Map);
+
+      _applyServerData(data);
+
+      return true;
+    } on DioException {
+      await LocalStorage.clearSession();
+
+      state = const AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+      );
+
+      return false;
+    } catch (_) {
+      await LocalStorage.clearSession();
+
+      state = const AuthState(
+        isLoading: false,
+        isAuthenticated: false,
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // FETCH CURRENT USER / SHOP
+  // ============================================================
+
+  Future<bool> fetchMe() async {
+    try {
+      final token = await LocalStorage.getToken();
+
+      if (token == null ||
+          token.isEmpty ||
+          token.startsWith("offline_")) {
+        return false;
+      }
+
+      final response = await ApiClient.client.get(
+        ApiConstants.me,
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      if (response.data is! Map) {
+        return false;
+      }
+
+      final data =
+          Map<String, dynamic>.from(response.data as Map);
+
+      _applyServerData(data);
+
+      return true;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        await LocalStorage.clearSession();
+
+        state = const AuthState(
+          isLoading: false,
+          isAuthenticated: false,
+        );
+      }
+
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ============================================================
+  // UPDATE PROFILE
+  // ============================================================
+
+  Future<bool> updateProfile({
+    String? fullName,
+    String? phone,
+    String? shopName,
+    String? shopPhone,
+    String? address,
+
+    // Compatibility with current ProfileScreen.
+    String? shopAddress,
+
+    String? gstin,
+    String? upiId,
+  }) async {
+    try {
+      final token = await LocalStorage.getToken();
+
+      if (token == null ||
+          token.isEmpty ||
+          token.startsWith("offline_")) {
+        state = state.copyWith(
+          errorMessage: "Please login again.",
+        );
+        return false;
+      }
+
+      final finalAddress = shopAddress ?? address;
+
+      final response = await ApiClient.client.put(
+        ApiConstants.profile,
+        data: {
+          if (fullName != null && fullName.trim().isNotEmpty)
+            "full_name": fullName.trim(),
+
+          if (phone != null)
+            "phone": phone.trim(),
+
+          if (shopName != null && shopName.trim().isNotEmpty)
+            "shop_name": shopName.trim(),
+
+          if (shopPhone != null)
+            "shop_phone": shopPhone.trim(),
+
+          if (finalAddress != null)
+            "address": finalAddress.trim(),
+
+          if (gstin != null)
+            "gstin": gstin.trim(),
+
+          if (upiId != null)
+            "upi_id": upiId.trim(),
+        },
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      if (response.data is Map) {
+        final data =
+            Map<String, dynamic>.from(response.data as Map);
+
+        // Backend may return updated profile directly.
+        if (data.containsKey("user") &&
+            data.containsKey("shop")) {
+          _applyServerData(data);
+          return true;
+        }
+      }
+
+      // Otherwise fetch the authoritative profile.
+      return await fetchMe();
+    } on DioException catch (e) {
+      state = state.copyWith(
+        errorMessage:
+            _getErrorMessage(e, "Profile update failed."),
+      );
+
+      return false;
+    } catch (e) {
+      state = state.copyWith(
+        errorMessage:
+            e.toString().replaceFirst("Exception: ", ""),
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // CHANGE PASSWORD
+  // ============================================================
+
+  Future<bool> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    try {
+      final token = await LocalStorage.getToken();
+
+      if (token == null ||
+          token.isEmpty ||
+          token.startsWith("offline_")) {
+        state = state.copyWith(
+          errorMessage: "Please login again.",
+        );
+        return false;
+      }
+
+      await ApiClient.client.post(
+        ApiConstants.changePassword,
+        data: {
+          "old_password": oldPassword,
+          "new_password": newPassword,
+        },
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      state = state.copyWith(
+        errorMessage: null,
+      );
+
+      return true;
+    } on DioException catch (e) {
+      state = state.copyWith(
+        errorMessage:
+            _getErrorMessage(e, "Password change failed."),
+      );
+
+      return false;
+    } catch (e) {
+      state = state.copyWith(
+        errorMessage:
+            e.toString().replaceFirst("Exception: ", ""),
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
+  Future<void> logout() async {
+    await LocalStorage.clearSession();
+
+    state = const AuthState(
+      isLoading: false,
+      isAuthenticated: false,
+      user: null,
+      shop: null,
+      upiId: "",
+      errorMessage: null,
+    );
+  }
+}
+
+// ============================================================
+// PROVIDER
+// ============================================================
+
+final authProvider =
+    StateNotifierProvider<AuthNotifier, AuthState>(
+  (ref) => AuthNotifier(),
+);
+import 'package:shared_preferences/shared_preferences.dart';
+
+class LocalStorage {
+  static const String _keyToken = "auth_token";
+  static const String _keyUserId = "user_id";
+  static const String _keyShopId = "shop_id";
+  static const String _keyOwnerName = "owner_name";
+  static const String _keyShopName = "shop_name";
+  static const String _keyEmail = "user_email";
+  static const String _keyOnboarding = "has_seen_onboarding";
+
+  static Future<void> saveAuthSession({
+    required String token,
+    required int userId,
+    required int shopId,
+    required String ownerName,
+    required String shopName,
+    required String email,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString(_keyToken, token);
+    await prefs.setInt(_keyUserId, userId);
+    await prefs.setInt(_keyShopId, shopId);
+    await prefs.setString(_keyOwnerName, ownerName);
+    await prefs.setString(_keyShopName, shopName);
+    await prefs.setString(_keyEmail, email);
+  }
+
+  static Future<String?> getToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_keyToken);
+  }
+
+  static Future<Map<String, dynamic>?> getUserSession() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final token = prefs.getString(_keyToken);
+
+    if (token == null) {
+      return null;
+    }
+
+    return {
+      "token": token,
+      "user_id": prefs.getInt(_keyUserId) ?? 0,
+      "shop_id": prefs.getInt(_keyShopId) ?? 0,
+      "owner_name": prefs.getString(_keyOwnerName) ?? "Shopkeeper",
+      "shop_name": prefs.getString(_keyShopName) ?? "My Khata",
+      "email": prefs.getString(_keyEmail) ?? "",
+      "phone": prefs.getString("user_phone") ?? "",
+    };
+  }
+
+  static Future<void> saveLocalCredentials({
+    required String email,
+    required String password,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setString("local_email", email);
+    await prefs.setString("local_password", password);
+  }
+
+  static Future<Map<String, String>?> getLocalCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    final email = prefs.getString("local_email");
+    final password = prefs.getString("local_password");
+
+    if (email == null || password == null) {
+      return null;
+    }
+
+    return {
+      "email": email,
+      "password": password,
+    };
+  }
+
+  static Future<bool> hasSeenOnboarding() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_keyOnboarding) ?? false;
+  }
+
+  static Future<void> setOnboardingSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyOnboarding, true);
+  }
+
+  static Future<void> saveProfileUpdate({
+    String? ownerName,
+    String? shopName,
+    String? phone,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (ownerName != null) {
+      await prefs.setString(_keyOwnerName, ownerName);
+    }
+
+    if (shopName != null) {
+      await prefs.setString(_keyShopName, shopName);
+    }
+
+    if (phone != null) {
+      await prefs.setString("user_phone", phone);
+    }
+  }
+
+  static Future<void> clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.remove(_keyToken);
+    await prefs.remove(_keyUserId);
+    await prefs.remove(_keyShopId);
+    await prefs.remove(_keyOwnerName);
+    await prefs.remove(_keyShopName);
+    await prefs.remove(_keyEmail);
+    await prefs.remove("user_phone");
+  }
+}
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../core/database/local_database.dart';
+import '../core/storage/local_storage.dart';
+import '../models/transaction_model.dart';
+
+class TransactionState {
+  final bool isLoading;
+  final List<TransactionModel> transactions;
+  final String? errorMessage;
+  final String? typeFilter;
+  final String? sourceFilter;
+
+  TransactionState({
+    this.isLoading = false,
+    this.transactions = const [],
+    this.errorMessage,
+    this.typeFilter,
+    this.sourceFilter,
+  });
+
+  TransactionState copyWith({
+    bool? isLoading,
+    List<TransactionModel>? transactions,
+    String? errorMessage,
+    String? typeFilter,
+    String? sourceFilter,
+  }) {
+    return TransactionState(
+      isLoading: isLoading ?? this.isLoading,
+      transactions: transactions ?? this.transactions,
+      errorMessage: errorMessage,
+      typeFilter: typeFilter ?? this.typeFilter,
+      sourceFilter: sourceFilter ?? this.sourceFilter,
+    );
+  }
+}
+
+class TransactionNotifier extends StateNotifier<TransactionState> {
+  TransactionNotifier() : super(TransactionState()) {
+    fetchTransactions();
+  }
+
+  Future<void> fetchTransactions({
+    int? customerId,
+    String? transactionType,
+    String? source,
+  }) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+
+    try {
+      final db = await LocalDatabase.database;
+      final session = await LocalStorage.getUserSession();
+      final shopId = session?["shop_id"] ?? 0;
+
+      String where = "shop_id = ?";
+      final List<Object?> args = [shopId];
+
+      if (customerId != null) {
+        where += " AND customer_id = ?";
+        args.add(customerId);
+      }
+
+      if (transactionType != null && transactionType.isNotEmpty) {
+        where += " AND transaction_type = ?";
+        args.add(transactionType.toUpperCase());
+      }
+
+      if (source != null && source.isNotEmpty) {
+        where += " AND source = ?";
+        args.add(source.toUpperCase());
+      }
+
+      final rows = await db.query(
+        "transactions",
+        where: where,
+        whereArgs: args,
+        orderBy: "date DESC, id DESC",
+      );
+
+      final list = rows.map(_transactionFromRow).toList();
+
+      state = state.copyWith(
+        isLoading: false,
+        transactions: list,
+        typeFilter: transactionType,
+        sourceFilter: source,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString(),
+      );
+    }
+  }
+
+  Future<bool> checkDuplicate({
+    required int customerId,
+    required double amount,
+    required String transactionType,
+    DateTime? date,
+  }) async {
+    try {
+      final db = await LocalDatabase.database;
+      final session = await LocalStorage.getUserSession();
+      final shopId = session?["shop_id"] ?? 0;
+
+      String where =
+          "shop_id = ? AND customer_id = ? AND amount = ? AND transaction_type = ?";
+      final List<Object?> args = [
+        shopId,
+        customerId,
+        amount,
+        transactionType.toUpperCase(),
+      ];
+
+      if (date != null) {
+        final start = DateTime(date.year, date.month, date.day);
+        final end = start.add(const Duration(days: 1));
+
+        where += " AND date >= ? AND date < ?";
+        args.add(start.toIso8601String());
+        args.add(end.toIso8601String());
+      }
+
+      final rows = await db.query(
+        "transactions",
+        where: where,
+        whereArgs: args,
+        limit: 1,
+      );
+
+      return rows.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> addTransaction({
+    required int customerId,
+    required double amount,
+    required String transactionType,
+    String? notes,
+    String? paymentMode,
+    DateTime? date,
+    bool force = false,
+  }) async {
+    state = state.copyWith(
+      isLoading: true,
+      errorMessage: null,
+    );
+
+    try {
+      final db = await LocalDatabase.database;
+      final session = await LocalStorage.getUserSession();
+      final shopId = session?["shop_id"] ?? 0;
+
+      final txDate = date ?? DateTime.now();
+      final normalizedType = transactionType.toUpperCase();
+
+      if (!force) {
+        final duplicate = await checkDuplicate(
+          customerId: customerId,
+          amount: amount,
+          transactionType: normalizedType,
+          date: txDate,
+        );
+
+        if (duplicate) {
+          state = state.copyWith(
+            isLoading: false,
+            errorMessage: "Possible duplicate transaction detected.",
+          );
+          return false;
+        }
+      }
+
+      final customerRows = await db.query(
+        "customers",
+        where: "id = ? AND shop_id = ?",
+        whereArgs: [customerId, shopId],
+        limit: 1,
+      );
+
+      if (customerRows.isEmpty) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: "Customer not found.",
+        );
+        return false;
+      }
+
+      final customer = customerRows.first;
+      final customerName = customer["name"] as String;
+
+      final currentBalance =
+          (customer["credit_balance"] as num?)?.toDouble() ?? 0.0;
+
+      final currentCredit =
+          (customer["total_credit"] as num?)?.toDouble() ?? 0.0;
+
+      final currentPayment =
+          (customer["total_payment"] as num?)?.toDouble() ?? 0.0;
+
+      double newBalance = currentBalance;
+      double newCredit = currentCredit;
+      double newPayment = currentPayment;
+
+      if (normalizedType == "CREDIT") {
+        newBalance += amount;
+        newCredit += amount;
+      } else if (normalizedType == "PAYMENT") {
+        newBalance -= amount;
+        newPayment += amount;
+      }
+
+      final id = DateTime.now().microsecondsSinceEpoch;
+
+      await db.transaction((txn) async {
+        await txn.insert("transactions", {
+          "id": id,
+          "shop_id": shopId,
+          "customer_id": customerId,
+          "customer_name": customerName,
+          "scan_entry_id": null,
+          "amount": amount,
+          "transaction_type": normalizedType,
+          "date": txDate.toIso8601String(),
+          "notes": notes,
+          "payment_mode": paymentMode,
+          "source": "MANUAL",
+          "created_at": DateTime.now().toIso8601String(),
+        });
+
+        await txn.update(
+          "customers",
+          {
+            "credit_balance": newBalance,
+            "total_credit": newCredit,
+            "total_payment": newPayment,
+            "transaction_count":
+                (customer["transaction_count"] as int? ?? 0) + 1,
+            "updated_at": DateTime.now().toIso8601String(),
+          },
+          where: "id = ?",
+          whereArgs: [customerId],
+        );
+      });
+
+      final newTx = TransactionModel(
+        id: id,
+        shopId: shopId,
+        customerId: customerId,
+        customerName: customerName,
+        scanEntryId: null,
+        amount: amount,
+        transactionType: normalizedType,
+        date: txDate,
+        notes: notes,
+        paymentMode: paymentMode,
+        source: "MANUAL",
+        createdAt: DateTime.now(),
+      );
+
+      state = state.copyWith(
+        isLoading: false,
+        transactions: [newTx, ...state.transactions],
+      );
+
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: e.toString(),
+      );
+      return false;
+    }
+  }
+
+  TransactionModel _transactionFromRow(Map<String, Object?> row) {
+    return TransactionModel(
+      id: row["id"] as int,
+      shopId: row["shop_id"] as int,
+      customerId: row["customer_id"] as int,
+      customerName: row["customer_name"] as String,
+      scanEntryId: row["scan_entry_id"] as int?,
+      amount: (row["amount"] as num).toDouble(),
+      transactionType: row["transaction_type"] as String,
+      date: DateTime.parse(row["date"] as String),
+      notes: row["notes"] as String?,
+      paymentMode: row["payment_mode"] as String?,
+      source: row["source"] as String,
+      createdAt: row["created_at"] != null
+          ? DateTime.tryParse(row["created_at"] as String)
+          : null,
+    );
+  }
+}
+
+final transactionProvider =
+    StateNotifierProvider<TransactionNotifier, TransactionState>(
+  (ref) => TransactionNotifier(),
+);
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import '../core/theme/app_theme.dart';
+import '../providers/customer_provider.dart';
+import '../providers/transaction_provider.dart';
+import '../providers/dashboard_provider.dart';
+
+class AddTransactionScreen extends ConsumerStatefulWidget {
+  final int? prefilledCustomerId;
+  const AddTransactionScreen({super.key, this.prefilledCustomerId});
+
+  @override
+  ConsumerState<AddTransactionScreen> createState() => _AddTransactionScreenState();
+}
+
+class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _amountCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
+  final _customerSearchCtrl = TextEditingController();
+
+  // "CREDIT" = à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾ (Customer owes money)
+  // "PAYMENT" = à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ (Customer pays money)
+  String _txType = "CREDIT";
+  String _paymentMode = "Cash";
+  final List<Map<String, dynamic>> _paymentModes = [
+    {"id": "Cash", "label": "Cash / à¤¨à¤•à¤¦", "icon": Icons.payments_outlined},
+    {"id": "UPI", "label": "UPI", "icon": Icons.qr_code_2_rounded},
+    {"id": "Card", "label": "Card / à¤•à¤¾à¤°à¥à¤¡", "icon": Icons.credit_card_rounded},
+    {"id": "Bank Transfer", "label": "Bank Transfer / à¤¬à¥ˆà¤‚à¤• à¤Ÿà¥à¤°à¤¾à¤‚à¤¸à¤«à¤°", "icon": Icons.account_balance_rounded},
+    {"id": "Cheque", "label": "Cheque / à¤šà¥‡à¤•", "icon": Icons.receipt_long_rounded},
+    {"id": "Other", "label": "Other / à¤…à¤¨à¥à¤¯", "icon": Icons.more_horiz_rounded},
+  ];
+  DateTime _date = DateTime.now();
+  int? _selectedCustomerId;
+  bool _showCustomerDropdown = false;
+  String? _duplicateWarning;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(customerProvider.notifier).fetchCustomers();
+      if (widget.prefilledCustomerId != null) {
+        final customers = ref.read(customerProvider).customers;
+        final c = customers.where((c) => c.id == widget.prefilledCustomerId).firstOrNull;
+        if (c != null) {
+          setState(() {
+            _selectedCustomerId = c.id;
+            _customerSearchCtrl.text = c.name;
+          });
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _amountCtrl.dispose();
+    _notesCtrl.dispose();
+    _customerSearchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkDuplicate() async {
+    if (_selectedCustomerId == null || _amountCtrl.text.isEmpty) return;
+    final amount = double.tryParse(_amountCtrl.text);
+    if (amount == null) return;
+
+    final isDuplicate = await ref.read(transactionProvider.notifier).checkDuplicate(
+      customerId: _selectedCustomerId!,
+      amount: amount,
+      transactionType: _txType,
+      date: _date,
+    );
+
+    setState(() {
+      _duplicateWarning = isDuplicate
+          ? "âš ï¸ à¤šà¥‡à¤¤à¤¾à¤µà¤¨à¥€: à¤‡à¤¸ à¤—à¥à¤°à¤¾à¤¹à¤• à¤•à¥‡ à¤²à¤¿à¤ à¤ªà¤¿à¤›à¤²à¥‡ 24 à¤˜à¤‚à¤Ÿà¥‡ à¤®à¥‡à¤‚ â‚¹${amount.toStringAsFixed(2)} à¤•à¤¾ à¤¸à¤®à¤¾à¤¨ à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ à¤®à¥Œà¤œà¥‚à¤¦ à¤¹à¥ˆà¥¤ à¤•à¥à¤¯à¤¾ à¤†à¤ª à¤¨à¤¿à¤¶à¥à¤šà¤¿à¤¤ à¤¹à¥ˆà¤‚?"
+          : null;
+    });
+  }
+
+  Future<void> _submit({bool force = false}) async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedCustomerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("à¤•à¥ƒà¤ªà¤¯à¤¾ à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ à¤•à¥‡ à¤²à¤¿à¤ à¤—à¥à¤°à¤¾à¤¹à¤• à¤šà¥à¤¨à¥‡à¤‚"),
+          backgroundColor: AppColors.creditRed,
+        ),
+      );
+      return;
+    }
+
+    final amount = double.parse(_amountCtrl.text);
+
+    final ok = await ref.read(transactionProvider.notifier).addTransaction(
+      customerId: _selectedCustomerId!,
+      amount: amount,
+      transactionType: _txType,
+      date: _date,
+      notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+      paymentMode: _txType == "PAYMENT" ? _paymentMode : null,
+      force: force,
+    );
+
+    if (ok && mounted) {
+      // Refresh dashboard summary and customers list
+      ref.read(dashboardProvider.notifier).fetchSummary();
+      ref.read(customerProvider.notifier).fetchCustomers();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "â‚¹${amount.toStringAsFixed(2)} à¤•à¤¾ à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ (${_txType == "CREDIT" ? "à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾" : "à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤"}) à¤¸à¤«à¤²à¤¤à¤¾à¤ªà¥‚à¤°à¥à¤µà¤• à¤¦à¤°à¥à¤œ à¤¹à¥à¤†!",
+          ),
+          backgroundColor: AppColors.paymentGreen,
+        ),
+      );
+      context.pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final customerState = ref.watch(customerProvider);
+    final txState = ref.watch(transactionProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final filteredCustomers = customerState.customers.where((c) {
+      final q = _customerSearchCtrl.text.toLowerCase();
+      return c.name.toLowerCase().contains(q) || (c.phone != null && c.phone!.contains(q));
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("à¤¨à¤¯à¤¾ à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ à¤œà¥‹à¤¡à¤¼à¥‡à¤‚", style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+            Text("Add Udhaar / Jama Transaction", style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          ],
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // â”€â”€â”€ 1. TRANSACTION TYPE SELECTOR (Big, Unambiguous) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const Text(
+                "à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ à¤•à¤¾ à¤ªà¥à¤°à¤•à¤¾à¤° à¤šà¥à¤¨à¥‡à¤‚ (Transaction Type):",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  // Credit / à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        setState(() => _txType = "CREDIT");
+                        _checkDuplicate();
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: _txType == "CREDIT"
+                              ? AppColors.creditRed.withOpacity(0.12)
+                              : (isDark ? const Color(0xFF1E293B) : Colors.white),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.divider,
+                            width: _txType == "CREDIT" ? 2.5 : 1,
+                          ),
+                          boxShadow: _txType == "CREDIT"
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.creditRed.withOpacity(0.15),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  )
+                                ]
+                              : [],
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.arrow_outward_rounded,
+                                  color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.textMuted,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                    color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "Customer owes money",
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Payment / à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤
+                  Expanded(
+                    child: InkWell(
+                      onTap: () {
+                        setState(() => _txType = "PAYMENT");
+                        _checkDuplicate();
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                        decoration: BoxDecoration(
+                          color: _txType == "PAYMENT"
+                              ? AppColors.paymentGreen.withOpacity(0.12)
+                              : (isDark ? const Color(0xFF1E293B) : Colors.white),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.divider,
+                            width: _txType == "PAYMENT" ? 2.5 : 1,
+                          ),
+                          boxShadow: _txType == "PAYMENT"
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.paymentGreen.withOpacity(0.15),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  )
+                                ]
+                              : [],
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.arrow_downward_rounded,
+                                  color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.textMuted,
+                                  size: 22,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  "à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                    color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "Customer paid money",
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 22),
+
+              // â”€â”€â”€ 2. SELECT CUSTOMER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const Text(
+                "à¤—à¥à¤°à¤¾à¤¹à¤• à¤šà¥à¤¨à¥‡à¤‚ (Select Customer):",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _customerSearchCtrl,
+                onTap: () => setState(() => _showCustomerDropdown = true),
+                onChanged: (_) => setState(() => _showCustomerDropdown = true),
+                decoration: InputDecoration(
+                  hintText: "à¤—à¥à¤°à¤¾à¤¹à¤• à¤–à¥‹à¤œà¥‡à¤‚ à¤¯à¤¾ à¤šà¥à¤¨à¥‡à¤‚...",
+                  prefixIcon: const Icon(Icons.person_search_rounded, color: AppColors.primary),
+                  suffixIcon: _selectedCustomerId != null
+                      ? IconButton(
+                          icon: const Icon(Icons.check_circle_rounded, color: AppColors.paymentGreen),
+                          onPressed: () {},
+                        )
+                      : null,
+                ),
+              ),
+
+              // Dropdown suggestions
+              if (_showCustomerDropdown)
+                Container(
+                  constraints: const BoxConstraints(maxHeight: 180),
+                  margin: const EdgeInsets.only(top: 6),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppColors.divider),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))
+                    ],
+                  ),
+                  child: filteredCustomers.isEmpty
+                      ? const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text("à¤•à¥‹à¤ˆ à¤—à¥à¤°à¤¾à¤¹à¤• à¤¨à¤¹à¥€à¤‚ à¤®à¤¿à¤²à¤¾à¥¤ à¤•à¥ƒà¤ªà¤¯à¤¾ Customers à¤Ÿà¥ˆà¤¬ à¤¸à¥‡ à¤œà¥‹à¤¡à¤¼à¥‡à¤‚à¥¤", style: TextStyle(fontSize: 12, color: AppColors.textMuted)),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: filteredCustomers.length,
+                          itemBuilder: (ctx, idx) {
+                            final c = filteredCustomers[idx];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                radius: 16,
+                                backgroundColor: AppColors.primary.withOpacity(0.12),
+                                child: Text(c.name.isNotEmpty ? c.name[0].toUpperCase() : "?", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                              ),
+                              title: Text(c.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                              subtitle: Text(c.phone ?? "à¤¬à¤•à¤¾à¤¯à¤¾: â‚¹${c.balance.toStringAsFixed(2)}", style: const TextStyle(fontSize: 11)),
+                              onTap: () {
+                                setState(() {
+                                  _selectedCustomerId = c.id;
+                                  _customerSearchCtrl.text = c.name;
+                                  _showCustomerDropdown = false;
+                                });
+                                _checkDuplicate();
+                              },
+                            );
+                          },
+                        ),
+                ),
+              const SizedBox(height: 20),
+
+              // â”€â”€â”€ 3. AMOUNT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const Text(
+                "à¤°à¤•à¤® à¤¦à¤°à¥à¤œ à¤•à¤°à¥‡à¤‚ (Amount in Rupees):",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _amountCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                decoration: const InputDecoration(
+                  prefixText: "â‚¹ ",
+                  prefixStyle: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppColors.primary),
+                  hintText: "0.00",
+                ),
+                validator: (val) {
+                  if (val == null || val.trim().isEmpty) return "à¤•à¥ƒà¤ªà¤¯à¤¾ à¤°à¤•à¤® à¤¦à¤°à¥à¤œ à¤•à¤°à¥‡à¤‚";
+                  final num = double.tryParse(val.trim());
+                  if (num == null || num <= 0) return "à¤•à¥ƒà¤ªà¤¯à¤¾ à¤®à¤¾à¤¨à¥à¤¯ à¤°à¤•à¤® à¤¦à¤°à¥à¤œ à¤•à¤°à¥‡à¤‚ (0 à¤¸à¥‡ à¤…à¤§à¤¿à¤•)";
+                  return null;
+                },
+                onChanged: (_) => _checkDuplicate(),
+              ),
+              const SizedBox(height: 20),
+
+              // â”€â”€â”€ PAYMENT MODE (Only for PAYMENT / à¤œà¤®à¤¾) â”€â”€â”€â”€â”€â”€â”€â”€
+              if (_txType == "PAYMENT") ...[
+                Row(
+                  children: [
+                    const Text(
+                      "à¤­à¥à¤—à¤¤à¤¾à¤¨ à¤•à¤¾ à¤®à¤¾à¤§à¥à¤¯à¤® (Payment Mode):",
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.paymentGreen.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        "à¤œà¤®à¤¾ à¤•à¥‡ à¤²à¤¿à¤",
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.paymentGreen),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _paymentModes.map((mode) {
+                    final isSelected = _paymentMode == mode["id"];
+                    return ChoiceChip(
+                      avatar: Icon(
+                        mode["icon"] as IconData,
+                        size: 16,
+                        color: isSelected ? Colors.white : AppColors.primary,
+                      ),
+                      label: Text(mode["label"] as String),
+                      selected: isSelected,
+                      selectedColor: AppColors.paymentGreen,
+                      backgroundColor: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+                      labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : (isDark ? Colors.white70 : AppColors.textPrimary),
+                        fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                        fontSize: 12,
+                      ),
+                      onSelected: (val) {
+                        if (val) setState(() => _paymentMode = mode["id"] as String);
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 20),
+              ],
+
+              // â”€â”€â”€ 4. DATE SELECTOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("à¤¦à¤¿à¤¨à¤¾à¤‚à¤• (Date):", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                        const SizedBox(height: 8),
+                        InkWell(
+                          onTap: () async {
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate: _date,
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime.now().add(const Duration(days: 1)),
+                            );
+                            if (picked != null) {
+                              setState(() => _date = picked);
+                              _checkDuplicate();
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                            decoration: BoxDecoration(
+                              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: AppColors.divider),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.calendar_today_rounded, size: 18, color: AppColors.primary),
+                                const SizedBox(width: 10),
+                                Text(
+                                  DateFormat("dd MMM yyyy").format(_date),
+                                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // â”€â”€â”€ 5. NOTES (Optional) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              const Text(
+                "à¤µà¤¿à¤µà¤°à¤£ / à¤¸à¤¾à¤®à¤¾à¤¨ à¤•à¥€ à¤œà¤¾à¤¨à¤•à¤¾à¤°à¥€ (Note - Optional):",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _notesCtrl,
+                decoration: const InputDecoration(
+                  hintText: "à¤‰à¤¦à¤¾. à¤¦à¤¾à¤², à¤¤à¥‡à¤², à¤šà¥€à¤¨à¥€, à¤¬à¤¿à¤¸à¥à¤•à¤¿à¤Ÿ...",
+                  prefixIcon: Icon(Icons.note_alt_outlined),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Duplicate warning banner if any
+              if (_duplicateWarning != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _duplicateWarning!,
+                        style: const TextStyle(color: Color(0xFF92400E), fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => _submit(force: true),
+                            child: const Text("à¤¹à¤¾à¤, à¤«à¤¿à¤° à¤­à¥€ à¤¸à¥‡à¤µ à¤•à¤°à¥‡à¤‚ (Force Save)", style: TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFB45309))),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // â”€â”€â”€ SUBMIT BUTTON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              ElevatedButton(
+                onPressed: txState.isLoading ? null : () => _submit(force: false),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _txType == "CREDIT" ? AppColors.creditRed : AppColors.paymentGreen,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: txState.isLoading
+                    ? const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            _txType == "CREDIT" ? Icons.arrow_outward_rounded : Icons.arrow_downward_rounded,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _txType == "CREDIT" ? "à¤‰à¤§à¤¾à¤° à¤¸à¥‡à¤µ à¤•à¤°à¥‡à¤‚ / Save Credit" : "à¤œà¤®à¤¾ à¤¸à¥‡à¤µ à¤•à¤°à¥‡à¤‚ / Save Payment",
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white),
+                          ),
+                        ],
+                      ),
+              ),
+              const SizedBox(height: 30),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import '../core/theme/app_theme.dart';
+import '../providers/scan_provider.dart';
+import '../models/scan_model.dart';
+import '../widgets/confidence_badge.dart';
+
+class OcrReviewScreen extends ConsumerStatefulWidget {
+  final int scanId;
+  const OcrReviewScreen({super.key, required this.scanId});
+
+  @override
+  ConsumerState<OcrReviewScreen> createState() => _OcrReviewScreenState();
+}
+
+class _OcrReviewScreenState extends ConsumerState<OcrReviewScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(scanProvider.notifier).loadScan(widget.scanId);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scanState = ref.watch(scanProvider);
+    final scan = scanState.currentScan;
+
+    if (scanState.isLoading || scan == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text("AI à¤–à¤¾à¤¤à¤¾ à¤¸à¤®à¥€à¤•à¥à¤·à¤¾")),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final pending = scan.entries.where((e) => e.isPending).toList();
+    final highConf = pending.where((e) => e.isHighConfidence).toList();
+    final needsReview = pending.where((e) => !e.isHighConfidence).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("AI à¤¨à¥‡ à¤¯à¥‡ entries à¤ªà¤¹à¤šà¤¾à¤¨à¥€ à¤¹à¥ˆà¤‚", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            Text("à¤•à¥ƒà¤ªà¤¯à¤¾ à¤¸à¥‡à¤µ à¤•à¤°à¤¨à¥‡ à¤¸à¥‡ à¤ªà¤¹à¤²à¥‡ à¤œà¤¾à¤à¤š à¤²à¥‡à¤‚ (Review Entries)", style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+          ],
+        ),
+        actions: [
+          if (pending.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: TextButton.icon(
+                onPressed: () => context.go("/home"),
+                icon: const Icon(Icons.check_circle_rounded, color: AppColors.paymentGreen),
+                label: const Text("à¤ªà¥‚à¤°à¥à¤£ âœ“ / Done", style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // â”€â”€â”€ Scan Image Header + Progress Strip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          _buildImageHeader(scan, pending, scan.entries),
+
+          // â”€â”€â”€ Entry Cards List â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+              children: [
+                // HIGH CONFIDENCE section
+                if (highConf.isNotEmpty) ...[
+                  _sectionHeader("à¤‰à¤šà¥à¤š à¤¸à¤Ÿà¥€à¤•à¤¤à¤¾ / HIGH CONFIDENCE", highConf.length, AppColors.paymentGreen),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: OutlinedButton.icon(
+                      onPressed: () => _batchConfirmHigh(context),
+                      icon: const Icon(Icons.done_all_rounded, size: 18),
+                      label: Text("à¤¸à¤­à¥€ ${highConf.length} à¤¸à¤¹à¥€ à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿à¤¯à¥‹à¤‚ à¤•à¥€ à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤•à¤°à¥‡à¤‚ (Auto-Confirm)"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.paymentGreen,
+                        side: const BorderSide(color: AppColors.paymentGreen, width: 1.5),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  ...highConf.map((e) => _EntryCard(entry: e, scanId: widget.scanId)),
+                ],
+
+                // NEEDS REVIEW section
+                if (needsReview.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _sectionHeader("à¤¸à¤®à¥€à¤•à¥à¤·à¤¾ à¤†à¤µà¤¶à¥à¤¯à¤• / NEEDS YOUR REVIEW", needsReview.length, AppColors.saffron),
+                  ...needsReview.map((e) => _EntryCard(entry: e, scanId: widget.scanId)),
+                ],
+
+                // Already processed
+                if (scan.entries.any((e) => !e.isPending)) ...[
+                  const SizedBox(height: 12),
+                  _sectionHeader(
+                    "à¤ªà¥à¤·à¥à¤Ÿà¥€à¤•à¥ƒà¤¤ à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿à¤¯à¤¾à¤ / PROCESSED",
+                    scan.entries.where((e) => !e.isPending).length,
+                    AppColors.textMuted,
+                  ),
+                  ...scan.entries
+                      .where((e) => !e.isPending)
+                      .map((e) => _EntryCard(entry: e, scanId: widget.scanId, readOnly: true)),
+                ],
+                const SizedBox(height: 80),
+              ],
+            ),
+          ),
+        ],
+      ),
+      bottomNavigationBar: pending.isNotEmpty
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: ElevatedButton(
+                  onPressed: () => context.go("/home"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: const Text("à¤ªà¥à¤°à¤—à¤¤à¤¿ à¤¸à¥‡à¤µ à¤•à¤°à¥‡à¤‚ à¤”à¤° à¤®à¥à¤–à¥à¤¯ à¤ªà¥ƒà¤·à¥à¤  à¤ªà¤° à¤œà¤¾à¤à¤ (Save Progress & Return Home)"),
+                ),
+              ),
+            )
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: ElevatedButton.icon(
+                  onPressed: () => context.go("/home"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.paymentGreen,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.check_rounded, color: Colors.white),
+                  label: const Text("à¤¸à¤­à¥€ à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿à¤¯à¤¾à¤ à¤¦à¤°à¥à¤œ à¤¹à¥‹ à¤—à¤ˆà¤‚! à¤¡à¥ˆà¤¶à¤¬à¥‹à¤°à¥à¤¡ à¤¦à¥‡à¤–à¥‡à¤‚ (All Done!)"),
+                ),
+              ),
+            ),
+    );
+  }
+
+  Future<void> _batchConfirmHigh(BuildContext context) async {
+    final result = await ref.read(scanProvider.notifier).batchConfirmHighConfidence(widget.scanId);
+    if (result && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("à¤‰à¤šà¥à¤š à¤¸à¤Ÿà¥€à¤•à¤¤à¤¾ à¤µà¤¾à¤²à¥€ à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿à¤¯à¥‹à¤‚ à¤•à¥€ à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤¹à¥‹ à¤—à¤ˆ à¤”à¤° à¤–à¤¾à¤¤à¥‡ à¤®à¥‡à¤‚ à¤œà¥à¤¡à¤¼ à¤—à¤ˆà¤‚!"),
+          backgroundColor: AppColors.paymentGreen,
+        ),
+      );
+    }
+  }
+
+  Widget _buildImageHeader(ScanModel scan, List<ScanEntryModel> pending, List<ScanEntryModel> all) {
+    final pct = all.isEmpty ? 0 : ((all.length - pending.length) / all.length);
+    return Container(
+      color: Theme.of(context).cardColor,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Row(
+        children: [
+          if (scan.imageUrl != null)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.network(
+                scan.imageUrl!,
+                width: 72,
+                height: 72,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 72,
+                  height: 72,
+                  color: AppColors.divider,
+                  child: const Icon(Icons.image_not_supported_outlined, color: AppColors.textMuted),
+                ),
+              ),
+            ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "${all.length} à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿à¤¯à¤¾à¤ à¤®à¤¿à¤²à¥€à¤‚ (${all.length} entries detected)",
+                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: pct.toDouble(),
+                    minHeight: 8,
+                    backgroundColor: AppColors.divider,
+                    valueColor: const AlwaysStoppedAnimation(AppColors.paymentGreen),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  "${all.length - pending.length} / ${all.length} à¤•à¥€ à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤¹à¥‹ à¤šà¥à¤•à¥€ à¤¹à¥ˆ",
+                  style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionHeader(String label, int count, Color color) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: [
+            Container(width: 4, height: 16, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(4))),
+            const SizedBox(width: 8),
+            Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color, letterSpacing: 0.8)),
+            const SizedBox(width: 8),
+            Text("($count)", style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: color.withOpacity(0.8))),
+          ],
+        ),
+      );
+}
+
+class _EntryCard extends ConsumerStatefulWidget {
+  final ScanEntryModel entry;
+  final int scanId;
+  final bool readOnly;
+
+  const _EntryCard({required this.entry, required this.scanId, this.readOnly = false});
+
+  @override
+  ConsumerState<_EntryCard> createState() => _EntryCardState();
+}
+
+class _EntryCardState extends ConsumerState<_EntryCard> {
+  bool _isEditing = false;
+  late TextEditingController _nameCtrl;
+  late TextEditingController _amountCtrl;
+  late TextEditingController _notesCtrl;
+  String _selectedType = "CREDIT";
+  DateTime? _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.entry.customerName ?? "");
+    _amountCtrl = TextEditingController(text: widget.entry.amount?.toStringAsFixed(2) ?? "");
+    _notesCtrl = TextEditingController(text: widget.entry.notes ?? "");
+    _selectedType = widget.entry.transactionType ?? "CREDIT";
+    _selectedDate = widget.entry.date;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _amountCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    await ref.read(scanProvider.notifier).confirmEntry(widget.scanId, widget.entry.id);
+  }
+
+  Future<void> _editAndConfirm() async {
+    await ref.read(scanProvider.notifier).editAndConfirmEntry(
+      widget.scanId,
+      widget.entry.id,
+      customerName: _nameCtrl.text.trim().isEmpty ? null : _nameCtrl.text.trim(),
+      amount: double.tryParse(_amountCtrl.text),
+      transactionType: _selectedType,
+      date: _selectedDate,
+      notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+    );
+    if (mounted) setState(() => _isEditing = false);
+  }
+
+  Future<void> _reject() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text("à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿ à¤¹à¤Ÿà¤¾à¤à¤? (Reject Entry)", style: TextStyle(fontWeight: FontWeight.w800)),
+        content: const Text("à¤¯à¤¹ à¤ªà¥à¤°à¤µà¤¿à¤·à¥à¤Ÿà¤¿ à¤¹à¤Ÿà¤¾ à¤¦à¥€ à¤œà¤¾à¤à¤—à¥€ à¤”à¤° à¤—à¥à¤°à¤¾à¤¹à¤• à¤•à¥‡ à¤¬à¤¹à¥€à¤–à¤¾à¤¤à¥‡ à¤®à¥‡à¤‚ à¤¨à¤¹à¥€à¤‚ à¤œà¥à¤¡à¤¼à¥‡à¤—à¥€à¥¤"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("à¤°à¤¦à¥à¤¦ à¤•à¤°à¥‡à¤‚ (Cancel)")),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.creditRed),
+            child: const Text("à¤¹à¤Ÿà¤¾à¤à¤ (Reject)", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await ref.read(scanProvider.notifier).rejectEntry(widget.scanId, widget.entry.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final e = widget.entry;
+    final fmt = NumberFormat('#,##,###.00');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+        border: Border.all(
+          color: widget.readOnly
+              ? AppColors.divider
+              : e.isHighConfidence
+                  ? AppColors.paymentGreen.withOpacity(0.3)
+                  : AppColors.saffron.withOpacity(0.4),
+          width: 1.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // â”€â”€ Confidence Badge & Status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            Row(
+              children: [
+                Expanded(
+                  child: ConfidenceBadge(
+                    band: e.confidenceBand,
+                    score: e.overallConfidence,
+                  ),
+                ),
+                if (!widget.readOnly) ...[
+                  if (e.status == "CONFIRMED" || e.status == "EDITED_CONFIRMED")
+                    const Icon(Icons.check_circle_rounded, color: AppColors.paymentGreen, size: 20)
+                  else if (e.status == "REJECTED")
+                    const Icon(Icons.cancel_rounded, color: AppColors.creditRed, size: 20),
+                ],
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            if (!_isEditing) ...[
+              _infoRow(Icons.person_outline, "à¤—à¥à¤°à¤¾à¤¹à¤• (Customer)", e.customerName ?? "à¤…à¤œà¥à¤žà¤¾à¤¤ (Unknown)"),
+              _infoRow(
+                Icons.currency_rupee_rounded,
+                "à¤°à¤•à¤® (Amount)",
+                e.amount != null ? "â‚¹${fmt.format(e.amount!)}" : "N/A",
+                highlight: true,
+              ),
+              _infoRow(
+                Icons.calendar_today_outlined,
+                "à¤¦à¤¿à¤¨à¤¾à¤‚à¤• (Date)",
+                e.date != null ? DateFormat("dd MMM yyyy").format(e.date!) : "N/A",
+              ),
+              _infoRow(
+                e.transactionType == "CREDIT" ? Icons.arrow_outward_rounded : Icons.arrow_downward_rounded,
+                "à¤ªà¥à¤°à¤•à¤¾à¤° (Type)",
+                e.transactionType == "CREDIT" ? "à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾ (Credit)" : "à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ (Payment)",
+              ),
+              if (e.rawText != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.divider.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.text_fields_rounded, size: 12, color: AppColors.textMuted),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          "à¤ªà¤¹à¤šà¤¾à¤¨à¤¾ à¤—à¤¯à¤¾ à¤Ÿà¥‡à¤•à¥à¤¸à¥à¤Ÿ: ${e.rawText!}",
+                          style: const TextStyle(fontSize: 10, color: AppColors.textMuted, fontFamily: 'monospace'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ] else ...[
+              // â”€â”€ Edit Form â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(labelText: "à¤—à¥à¤°à¤¾à¤¹à¤• à¤•à¤¾ à¤¨à¤¾à¤® (Customer Name)", prefixIcon: Icon(Icons.person_outline)),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _amountCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: "à¤°à¤•à¤® â‚¹ (Amount)", prefixIcon: Icon(Icons.currency_rupee_rounded)),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _selectedType,
+                items: const [
+                  DropdownMenuItem(value: "CREDIT", child: Text("à¤‰à¤§à¤¾à¤° à¤¦à¤¿à¤¯à¤¾ (CREDIT)")),
+                  DropdownMenuItem(value: "PAYMENT", child: Text("à¤œà¤®à¤¾ à¤ªà¥à¤°à¤¾à¤ªà¥à¤¤ (PAYMENT)")),
+                ],
+                onChanged: (v) => setState(() => _selectedType = v!),
+                decoration: const InputDecoration(labelText: "à¤²à¥‡à¤¨-à¤¦à¥‡à¤¨ à¤•à¤¾ à¤ªà¥à¤°à¤•à¤¾à¤°"),
+              ),
+              const SizedBox(height: 10),
+              GestureDetector(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: _selectedDate ?? DateTime.now(),
+                    firstDate: DateTime(2000),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) setState(() => _selectedDate = picked);
+                },
+                child: AbsorbPointer(
+                  child: TextFormField(
+                    decoration: InputDecoration(
+                      labelText: "à¤¦à¤¿à¤¨à¤¾à¤‚à¤• (Date)",
+                      prefixIcon: const Icon(Icons.calendar_today_outlined),
+                      hintText: _selectedDate != null ? DateFormat("dd MMM yyyy").format(_selectedDate!) : "à¤¤à¤¾à¤°à¥€à¤– à¤šà¥à¤¨à¥‡à¤‚",
+                    ),
+                    controller: TextEditingController(
+                      text: _selectedDate != null ? DateFormat("dd MMM yyyy").format(_selectedDate!) : "",
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _notesCtrl,
+                decoration: const InputDecoration(labelText: "à¤µà¤¿à¤µà¤°à¤£ (Notes - Optional)", prefixIcon: Icon(Icons.notes_rounded)),
+              ),
+            ],
+
+            // â”€â”€ Action buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            if (!widget.readOnly && e.isPending) ...[
+              const SizedBox(height: 12),
+              if (!_isEditing)
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: ElevatedButton.icon(
+                        onPressed: _confirm,
+                        icon: const Icon(Icons.check_rounded, size: 16, color: Colors.white),
+                        label: const Text("à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤•à¤°à¥‡à¤‚ (Confirm)"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.paymentGreen,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 3,
+                      child: OutlinedButton.icon(
+                        onPressed: () => setState(() => _isEditing = true),
+                        icon: const Icon(Icons.edit_rounded, size: 16),
+                        label: const Text("à¤¸à¤‚à¤ªà¤¾à¤¦à¤¿à¤¤ à¤•à¤°à¥‡à¤‚ (Edit)"),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _reject,
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: "à¤¹à¤Ÿà¤¾à¤à¤ (Reject)",
+                      style: IconButton.styleFrom(
+                        foregroundColor: AppColors.creditRed,
+                        backgroundColor: AppColors.creditRed.withOpacity(0.08),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _editAndConfirm,
+                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+                        child: const Text("à¤¸à¥‡à¤µ à¤•à¤°à¥‡à¤‚ à¤”à¤° à¤ªà¥à¤·à¥à¤Ÿà¤¿ à¤•à¤°à¥‡à¤‚"),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => setState(() => _isEditing = false),
+                      child: const Text("à¤°à¤¦à¥à¤¦ à¤•à¤°à¥‡à¤‚"),
+                    ),
+                  ],
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value, {bool highlight = false}) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            Icon(icon, size: 14, color: AppColors.textMuted),
+            const SizedBox(width: 6),
+            Text("$label: ", style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
+            Expanded(
+              child: Text(
+                value,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: highlight ? FontWeight.w800 : FontWeight.w600,
+                  color: highlight ? AppColors.primary : AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+}

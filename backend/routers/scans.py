@@ -201,6 +201,13 @@ async def upload_scan(
                 Customer.is_active == True,
             ).first()
 
+            if not matched_customer:
+                fuzzy = MatchingService.best_fuzzy_match(
+                    db=db, shop_id=shop.id, extracted_name=clean_name, threshold=0.75
+                )
+                if fuzzy:
+                    matched_customer, _score = fuzzy
+
             scan_entry = ScanEntry(
                 scan_id=scan.id,
                 matched_customer_id=matched_customer.id if matched_customer else None,
@@ -303,10 +310,16 @@ def confirm_scan_entry(
         ).first()
 
     if not target_customer:
-        # Create new customer with extracted name
+        fuzzy = MatchingService.best_fuzzy_match(
+            db=db, shop_id=shop.id, extracted_name=entry.extracted_customer_name, threshold=0.75
+        )
+        if fuzzy:
+            target_customer, _score = fuzzy
+
+    if not target_customer:
         target_customer = Customer(
             shop_id=shop.id,
-            name=entry.extracted_customer_name,
+            name=entry.extracted_customer_name.strip() or "Unknown",
             normalized_name=MatchingService.normalize_name(entry.extracted_customer_name),
             credit_balance=0.0,
             total_credit=0.0,
@@ -339,7 +352,7 @@ def confirm_scan_entry(
     entry.confirmed_at = datetime.datetime.utcnow()
 
     # Update scan confirmed count
-    scan = entry.scan
+    scan = db.query(Scan).filter(Scan.id == entry.scan_id).first()
     scan.confirmed_entries = db.query(ScanEntry).filter(
         ScanEntry.scan_id == scan.id,
         ScanEntry.status.in_(["CONFIRMED", "EDITED_CONFIRMED"])
@@ -410,9 +423,16 @@ def edit_and_confirm_scan_entry(
         ).first()
 
         if not target_customer:
+            fuzzy = MatchingService.best_fuzzy_match(
+                db=db, shop_id=shop.id, extracted_name=clean_name, threshold=0.75
+            )
+            if fuzzy:
+                target_customer, _score = fuzzy
+
+        if not target_customer:
             target_customer = Customer(
                 shop_id=shop.id,
-                name=clean_name,
+                name=clean_name or "Unknown",
                 normalized_name=norm_name,
                 credit_balance=0.0,
                 total_credit=0.0,
@@ -480,7 +500,7 @@ def edit_and_confirm_scan_entry(
     db.add(audit)
 
     # Update scan status
-    scan = entry.scan
+    scan = db.query(Scan).filter(Scan.id == entry.scan_id).first()
     scan.confirmed_entries = db.query(ScanEntry).filter(
         ScanEntry.scan_id == scan.id,
         ScanEntry.status.in_(["CONFIRMED", "EDITED_CONFIRMED"])
@@ -562,9 +582,16 @@ def batch_confirm_high_confidence(
         ).first()
 
         if not customer:
+            fuzzy = MatchingService.best_fuzzy_match(
+                db=db, shop_id=shop.id, extracted_name=clean_name, threshold=0.75
+            )
+            if fuzzy:
+                customer, _score = fuzzy
+
+        if not customer:
             customer = Customer(
                 shop_id=shop.id,
-                name=clean_name,
+                name=clean_name or "Unknown",
                 normalized_name=norm_name,
                 credit_balance=0.0,
                 total_credit=0.0,

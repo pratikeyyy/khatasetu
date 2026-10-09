@@ -78,7 +78,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
 
     setState(() {
       _duplicateWarning = isDuplicate
-          ? "⚠️ चेतावनी: इस ग्राहक के लिए पिछले 24 घंटे में ₹${amount.toStringAsFixed(2)} का समान लेन-देन मौजूद है। क्या आप निश्चित हैं?"
+          ? "⚠ चेतावनी: इस गराहक के लि पिछले 24 घंटे में ₹${amount.toStringAsFixed(2)} का समान लेन-देन मौजूद है। कया आप निशचित हैं?"
           : null;
     });
   }
@@ -115,7 +115,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            "₹${amount.toStringAsFixed(2)} का लेन-देन (${_txType == "CREDIT" ? "उधार दिया" : "जमा प्राप्त"}) सफलतापूर्वक दर्ज हुआ!",
+            "₹${amount.toStringAsFixed(2)} का लेन-देन (${_txType == "CREDIT" ? "उधार दिया" : "जमा प्राप्त"}) सफलतापूरवक दरज हआ!",
           ),
           backgroundColor: AppColors.paymentGreen,
         ),
@@ -154,7 +154,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
             children: [
               // ─── 1. TRANSACTION TYPE SELECTOR (Big, Unambiguous) ───────────
               const Text(
-                "लेन-देन का प्रकार चुनें (Transaction Type):",
+                "लेन-देन का परकार चनें (Transaction Type):",
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 10),
@@ -201,12 +201,17 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                                   size: 22,
                                 ),
                                 const SizedBox(width: 6),
-                                Text(
-                                  "उधार दिया",
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                    color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.textSecondary,
+                                Flexible(
+                                  child: Text(
+                                    "उधार दिया",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: _txType == "CREDIT" ? AppColors.creditRed : AppColors.textSecondary,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -214,6 +219,9 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                             const SizedBox(height: 4),
                             Text(
                               "Customer owes money",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w600,
@@ -268,12 +276,17 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                                   size: 22,
                                 ),
                                 const SizedBox(width: 6),
-                                Text(
-                                  "जमा प्राप्त",
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                    color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.textSecondary,
+                                Flexible(
+                                  child: Text(
+                                    "जमा प्राप्त",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w900,
+                                      color: _txType == "PAYMENT" ? AppColors.paymentGreen : AppColors.textSecondary,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -281,6 +294,9 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                             const SizedBox(height: 4),
                             Text(
                               "Customer paid money",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w600,
@@ -307,7 +323,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                 onTap: () => setState(() => _showCustomerDropdown = true),
                 onChanged: (_) => setState(() => _showCustomerDropdown = true),
                 decoration: InputDecoration(
-                  hintText: "ग्राहक खोजें या चुनें...",
+                  hintText: "गराहक खोजें या चनें...",
                   prefixIcon: const Icon(Icons.person_search_rounded, color: AppColors.primary),
                   suffixIcon: _selectedCustomerId != null
                       ? IconButton(
@@ -365,7 +381,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
 
               // ─── 3. AMOUNT ────────────────────────────────────────────────
               const Text(
-                "रकम दर्ज करें (Amount in Rupees):",
+                "रकम दरज करें (Amount in Rupees):",
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
@@ -379,9 +395,9 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                   hintText: "0.00",
                 ),
                 validator: (val) {
-                  if (val == null || val.trim().isEmpty) return "कृपया रकम दर्ज करें";
+                  if (val == null || val.trim().isEmpty) return "कृपया रकम दरज करें";
                   final num = double.tryParse(val.trim());
-                  if (num == null || num <= 0) return "कृपया मान्य रकम दर्ज करें (0 से अधिक)";
+                  if (num == null || num <= 0) return "कृपया मानय रकम दरज करें (0 से अधिक)";
                   return null;
                 },
                 onChanged: (_) => _checkDuplicate(),
@@ -393,7 +409,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                 Row(
                   children: [
                     const Text(
-                      "भुगतान का माध्यम (Payment Mode):",
+                      "भगतान का माधयम (Payment Mode):",
                       style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                     ),
                     const SizedBox(width: 8),
@@ -404,7 +420,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: const Text(
-                        "जमा के लिए",
+                        "जमा के लि",
                         style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.paymentGreen),
                       ),
                     ),
@@ -497,7 +513,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
               TextField(
                 controller: _notesCtrl,
                 decoration: const InputDecoration(
-                  hintText: "उदा. दाल, तेल, चीनी, बिस्किट...",
+                  hintText: "उदा. दाल, तेल, चीनी, बिसकिट...",
                   prefixIcon: Icon(Icons.note_alt_outlined),
                 ),
               ),
@@ -525,7 +541,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                         children: [
                           TextButton(
                             onPressed: () => _submit(force: true),
-                            child: const Text("हाँ, फिर भी सेव करें (Force Save)", style: TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFB45309))),
+                            child: const Text("हा, फिर भी सेव करें (Force Save)", style: TextStyle(fontWeight: FontWeight.w800, color: Color(0xFFB45309))),
                           ),
                         ],
                       ),

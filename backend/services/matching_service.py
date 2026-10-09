@@ -13,13 +13,13 @@ class MatchingService:
         """Standardizes name for string comparison (lowercase, strips honorifics and punctuation)."""
         if not name:
             return ""
-        name = name.lower().strip()
+        name = name.casefold().strip()
         # Strip common Indian honorifics: ji, bhai, saheb, bhaiya, ji
         honorifics = [r"\bji\b", r"\bbhai\b", r"\bsaheb\b", r"\bbhaiya\b", r"\bseth\b", r"\bshri\b", r"\bmr\b"]
         for h in honorifics:
             name = re.sub(h, "", name)
         # Remove special characters
-        name = re.sub(r"[^a-zA-Z0-9\s]", "", name)
+        name = re.sub(r"[^\w\s]", "", name, flags=re.UNICODE)
         return " ".join(name.split())
 
     @staticmethod
@@ -109,6 +109,78 @@ class MatchingService:
         # Sort highest similarity first
         candidates.sort(key=lambda x: x.similarity_score, reverse=True)
         return candidates
+
+
+    @classmethod
+    def best_fuzzy_match(
+        cls, db: Session, shop_id: int, extracted_name: str, threshold: float = 0.75
+    ) -> Optional[Tuple[Customer, float]]:
+        """Return the strongest existing customer match only when confidence is high enough."""
+        clean = (extracted_name or "").strip()
+        if not clean:
+            return None
+
+        customers = db.query(Customer).filter(
+            Customer.shop_id == shop_id,
+            Customer.is_active == True,
+        ).all()
+
+        ranked = []
+        for customer in customers:
+            score = cls.calculate_name_similarity(clean, customer.name)
+            ranked.append((customer, score))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        if not ranked or ranked[0][1] < threshold:
+            return None
+
+        # If two customers are almost equally similar, do not silently merge.
+        if len(ranked) > 1 and ranked[0][1] - ranked[1][1] < 0.05 and ranked[1][1] >= threshold:
+            return None
+
+        return ranked[0]
+
+    @classmethod
+    def repair_ai_transaction_links(cls, db: Session, shop_id: int) -> int:
+        """Repair old AI transactions that were attached to a duplicate OCR-created customer."""
+        txs = (
+            db.query(Transaction)
+            .filter(Transaction.shop_id == shop_id, Transaction.source == "AI_SCAN")
+            .all()
+        )
+        changed = 0
+        for tx in txs:
+            entry = tx.scan_entry
+            if not entry or not entry.extracted_customer_name:
+                continue
+
+            best = cls.best_fuzzy_match(
+                db=db, shop_id=shop_id, extracted_name=entry.extracted_customer_name, threshold=0.75
+            )
+            if not best:
+                continue
+
+            customer, _score = best
+            if customer.id == tx.customer_id:
+                continue
+
+            old_customer = db.query(Customer).filter(Customer.id == tx.customer_id).first()
+            tx.customer_id = customer.id
+            if old_customer:
+                old_customer.recalculate_balance()
+            customer.recalculate_balance()
+            changed += 1
+
+        if changed:
+            db.flush()
+            # Recalculate every affected customer's totals from authoritative transactions.
+            affected_ids = {tx.customer_id for tx in txs if tx.customer_id}
+            for customer_id in affected_ids:
+                affected = db.query(Customer).filter(Customer.id == customer_id).first()
+                if affected:
+                    affected.recalculate_balance()
+            db.commit()
+        return changed
 
     @classmethod
     def check_duplicate_transaction(
