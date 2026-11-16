@@ -103,7 +103,8 @@ app.include_router(scans_router, prefix=API_V1_PREFIX)
 app.include_router(dashboard_router, prefix=API_V1_PREFIX)
 app.include_router(reminders_router, prefix=API_V1_PREFIX)
 app.include_router(reports_router, prefix=API_V1_PREFIX)
-app.include_router(debug_router, prefix=API_V1_PREFIX)
+if settings.APP_ENV != "production":
+    app.include_router(debug_router, prefix=API_V1_PREFIX)
 
 
 @app.get("/")
