@@ -1,6 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/database/local_database.dart';
-import '../core/storage/local_storage.dart';
+import '../core/constants/api_constants.dart';
+import '../core/network/api_client.dart';
+import '../models/customer_model.dart';
 import '../models/transaction_model.dart';
 
 class TransactionState {
@@ -40,6 +42,45 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
     fetchTransactions();
   }
 
+  String _friendlyError(DioException e, String fallback) {
+    final data = e.response?.data;
+    if (data is Map) {
+      final detail = data["detail"];
+      if (detail is String && detail.isNotEmpty) {
+        return detail;
+      }
+      if (detail is Map && detail["message"] is String) {
+        return detail["message"] as String;
+      }
+      if (detail is List && detail.isNotEmpty) {
+        final first = detail.first;
+        if (first is Map && first["msg"] is String) {
+          return first["msg"] as String;
+        }
+      }
+    }
+
+    // ApiClient's interceptor already puts a friendly message in e.error.
+    final friendly = e.error?.toString();
+    if (friendly != null &&
+        friendly.isNotEmpty &&
+        friendly !=
+            "Network error. Please check your internet connection.") {
+      return friendly;
+    }
+
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return "Request timed out. Please try again.";
+    }
+
+    if (e.type == DioExceptionType.connectionError) {
+      return "Cannot connect to the server. Please check your internet.";
+    }
+
+    return e.message ?? fallback;
+  }
+
   Future<void> fetchTransactions({
     int? customerId,
     String? transactionType,
@@ -48,36 +89,31 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
     state = state.copyWith(isLoading: true, errorMessage: null);
 
     try {
-      final db = await LocalDatabase.database;
-      final session = await LocalStorage.getUserSession();
-      final shopId = session?["shop_id"] ?? 0;
-
-      String where = "shop_id = ?";
-      final List<Object?> args = [shopId];
-
-      if (customerId != null) {
-        where += " AND customer_id = ?";
-        args.add(customerId);
-      }
-
-      if (transactionType != null && transactionType.isNotEmpty) {
-        where += " AND transaction_type = ?";
-        args.add(transactionType.toUpperCase());
-      }
-
-      if (source != null && source.isNotEmpty) {
-        where += " AND source = ?";
-        args.add(source.toUpperCase());
-      }
-
-      final rows = await db.query(
-        "transactions",
-        where: where,
-        whereArgs: args,
-        orderBy: "date DESC, id DESC",
+      final response = await ApiClient.client.get(
+        ApiConstants.transactions,
+        queryParameters: {
+          if (customerId != null) "customer_id": customerId,
+          if (transactionType != null && transactionType.isNotEmpty)
+            "transaction_type": transactionType.toUpperCase(),
+          if (source != null && source.isNotEmpty)
+            "source": source.toUpperCase(),
+          "limit": 100,
+        },
       );
 
-      final list = rows.map(_transactionFromRow).toList();
+      final list = <TransactionModel>[];
+      final data = response.data;
+      if (data is List) {
+        for (final item in data) {
+          if (item is Map) {
+            list.add(
+              TransactionModel.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            );
+          }
+        }
+      }
 
       state = state.copyWith(
         isLoading: false,
@@ -85,10 +121,16 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
         typeFilter: transactionType,
         sourceFilter: source,
       );
+    } on DioException catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage:
+            _friendlyError(e, "Failed to load transactions."),
+      );
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: e.toString(),
+        errorMessage: e.toString().replaceFirst("Exception: ", ""),
       );
     }
   }
@@ -100,36 +142,22 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
     DateTime? date,
   }) async {
     try {
-      final db = await LocalDatabase.database;
-      final session = await LocalStorage.getUserSession();
-      final shopId = session?["shop_id"] ?? 0;
-
-      String where =
-          "shop_id = ? AND customer_id = ? AND amount = ? AND transaction_type = ?";
-      final List<Object?> args = [
-        shopId,
-        customerId,
-        amount,
-        transactionType.toUpperCase(),
-      ];
-
-      if (date != null) {
-        final start = DateTime(date.year, date.month, date.day);
-        final end = start.add(const Duration(days: 1));
-
-        where += " AND date >= ? AND date < ?";
-        args.add(start.toIso8601String());
-        args.add(end.toIso8601String());
-      }
-
-      final rows = await db.query(
-        "transactions",
-        where: where,
-        whereArgs: args,
-        limit: 1,
+      final response = await ApiClient.client.post(
+        ApiConstants.checkDuplicate,
+        data: {
+          "customer_id": customerId,
+          "amount": amount,
+          "transaction_type": transactionType.toUpperCase(),
+          if (date != null) "date": date.toIso8601String(),
+        },
       );
 
-      return rows.isNotEmpty;
+      final data = response.data;
+      if (data is Map) {
+        return data["is_possible_duplicate"] == true;
+      }
+
+      return false;
     } catch (_) {
       return false;
     }
@@ -151,12 +179,9 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
     );
 
     try {
-      final db = await LocalDatabase.database;
-      final session = await LocalStorage.getUserSession();
-      final shopId = session?["shop_id"] ?? 0;
-
       // Manual transactions may arrive with a name but no selected customer.
-      // Reuse an existing customer by name; otherwise create it automatically.
+      // Reuse an existing customer by exact name; otherwise create it
+      // through the API first, then post the transaction with that id.
       int? resolvedCustomerId = customerId;
       if (resolvedCustomerId == null) {
         final cleanName = manualCustomerName?.trim() ?? "";
@@ -168,173 +193,68 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
           return false;
         }
 
-        final existing = await db.query(
-          "customers",
-          where: "shop_id = ? AND LOWER(name) = LOWER(?)",
-          whereArgs: [shopId, cleanName],
-          limit: 1,
+        final searchResponse = await ApiClient.client.get(
+          ApiConstants.customers,
+          queryParameters: {"search": cleanName},
         );
 
-        if (existing.isNotEmpty) {
-          resolvedCustomerId = existing.first["id"] as int;
-        } else {
-          resolvedCustomerId = DateTime.now().microsecondsSinceEpoch;
-          await db.insert("customers", {
-            "id": resolvedCustomerId,
-            "shop_id": shopId,
-            "name": cleanName,
-            "phone": null,
-            "address": null,
-            "notes": null,
-            "credit_balance": 0.0,
-            "total_credit": 0.0,
-            "total_payment": 0.0,
-            "transaction_count": 0,
-            "created_at": DateTime.now().toIso8601String(),
-            "updated_at": DateTime.now().toIso8601String(),
-          });
+        final searchData = searchResponse.data;
+        if (searchData is List) {
+          for (final item in searchData) {
+            if (item is Map) {
+              final found = CustomerModel.fromJson(
+                Map<String, dynamic>.from(item),
+              );
+              if (found.name.trim().toLowerCase() ==
+                  cleanName.toLowerCase()) {
+                resolvedCustomerId = found.id;
+                break;
+              }
+            }
+          }
+        }
+
+        if (resolvedCustomerId == null) {
+          final createResponse = await ApiClient.client.post(
+            ApiConstants.customers,
+            data: {"name": cleanName},
+          );
+
+          if (createResponse.data is! Map) {
+            throw Exception("Customer could not be created.");
+          }
+
+          final created = CustomerModel.fromJson(
+            Map<String, dynamic>.from(createResponse.data as Map),
+          );
+          resolvedCustomerId = created.id;
         }
       }
 
       final txDate = date ?? DateTime.now();
       final normalizedType = transactionType.toUpperCase();
 
-      if (!force) {
-        final duplicate = await checkDuplicate(
-          customerId: resolvedCustomerId,
-          amount: amount,
-          transactionType: normalizedType,
-          date: txDate,
-        );
-
-        if (duplicate) {
-          state = state.copyWith(
-            isLoading: false,
-            errorMessage: "Possible duplicate transaction detected.",
-          );
-          return false;
-        }
-      }
-
-      var customerRows = await db.query(
-        "customers",
-        where: "id = ? AND shop_id = ?",
-        whereArgs: [resolvedCustomerId, shopId],
-        limit: 1,
-      );
-
-      if (customerRows.isEmpty) {
-        final cleanName = manualCustomerName?.trim() ?? "";
-        if (cleanName.isEmpty) {
-          state = state.copyWith(
-            isLoading: false,
-            errorMessage: "Customer name is required.",
-          );
-          return false;
-        }
-
-        // Keep the local transaction database in sync with the cloud customer.
-        await db.insert("customers", {
-          "id": resolvedCustomerId,
-          "shop_id": shopId,
-          "name": cleanName,
-          "phone": null,
-          "address": null,
-          "notes": null,
-          "credit_balance": 0.0,
-          "total_credit": 0.0,
-          "total_payment": 0.0,
-          "transaction_count": 0,
-          "created_at": DateTime.now().toIso8601String(),
-          "updated_at": DateTime.now().toIso8601String(),
-        });
-
-        customerRows = await db.query(
-          "customers",
-          where: "id = ? AND shop_id = ?",
-          whereArgs: [resolvedCustomerId, shopId],
-          limit: 1,
-        );
-      }
-
-      if (customerRows.isEmpty) {
-        state = state.copyWith(
-          isLoading: false,
-          errorMessage: "Customer could not be created locally.",
-        );
-        return false;
-      }
-
-      final customer = customerRows.first;
-      final customerName = customer["name"] as String;
-
-      final currentBalance =
-          (customer["credit_balance"] as num?)?.toDouble() ?? 0.0;
-
-      final currentCredit =
-          (customer["total_credit"] as num?)?.toDouble() ?? 0.0;
-
-      final currentPayment =
-          (customer["total_payment"] as num?)?.toDouble() ?? 0.0;
-
-      double newBalance = currentBalance;
-      double newCredit = currentCredit;
-      double newPayment = currentPayment;
-
-      if (normalizedType == "CREDIT") {
-        newBalance += amount;
-        newCredit += amount;
-      } else if (normalizedType == "PAYMENT") {
-        newBalance -= amount;
-        newPayment += amount;
-      }
-
-      final id = DateTime.now().microsecondsSinceEpoch;
-
-      await db.transaction((txn) async {
-        await txn.insert("transactions", {
-          "id": id,
-          "shop_id": shopId,
+      // The backend checks for duplicates itself and returns 409 unless
+      // force is true, so no separate pre-check is needed here.
+      final response = await ApiClient.client.post(
+        ApiConstants.transactions,
+        queryParameters: {"force": force},
+        data: {
           "customer_id": resolvedCustomerId,
-          "customer_name": customerName,
-          "scan_entry_id": null,
           "amount": amount,
           "transaction_type": normalizedType,
           "date": txDate.toIso8601String(),
-          "notes": notes,
+          "notes": notes?.trim(),
           "payment_mode": paymentMode,
-          "source": "MANUAL",
-          "created_at": DateTime.now().toIso8601String(),
-        });
+        },
+      );
 
-        await txn.update(
-          "customers",
-          {
-            "credit_balance": newBalance,
-            "total_credit": newCredit,
-            "total_payment": newPayment,
-            "transaction_count":
-                (customer["transaction_count"] as int? ?? 0) + 1,
-            "updated_at": DateTime.now().toIso8601String(),
-          },
-          where: "id = ?",
-          whereArgs: [customerId],
-        );
-      });
+      if (response.data is! Map) {
+        throw Exception("Invalid server response.");
+      }
 
-      final newTx = TransactionModel(
-        id: id,
-        shopId: shopId,
-        customerId: resolvedCustomerId,
-        customerName: customerName,
-        scanEntryId: null,
-        amount: amount,
-        transactionType: normalizedType,
-        date: txDate,
-        notes: notes,
-        paymentMode: paymentMode,
-        source: "MANUAL",
-        createdAt: DateTime.now(),
+      final newTx = TransactionModel.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
       );
 
       state = state.copyWith(
@@ -343,32 +263,20 @@ class TransactionNotifier extends StateNotifier<TransactionState> {
       );
 
       return true;
+    } on DioException catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage:
+            _friendlyError(e, "Failed to add transaction."),
+      );
+      return false;
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: e.toString(),
+        errorMessage: e.toString().replaceFirst("Exception: ", ""),
       );
       return false;
     }
-  }
-
-  TransactionModel _transactionFromRow(Map<String, Object?> row) {
-    return TransactionModel(
-      id: row["id"] as int,
-      shopId: row["shop_id"] as int,
-      customerId: row["customer_id"] as int,
-      customerName: row["customer_name"] as String,
-      scanEntryId: row["scan_entry_id"] as int?,
-      amount: (row["amount"] as num).toDouble(),
-      transactionType: row["transaction_type"] as String,
-      date: DateTime.parse(row["date"] as String),
-      notes: row["notes"] as String?,
-      paymentMode: row["payment_mode"] as String?,
-      source: row["source"] as String,
-      createdAt: row["created_at"] != null
-          ? DateTime.tryParse(row["created_at"] as String)
-          : null,
-    );
   }
 }
 

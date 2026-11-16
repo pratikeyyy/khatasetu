@@ -1,6 +1,7 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../core/database/local_database.dart';
-import '../core/storage/local_storage.dart';
+import '../core/constants/api_constants.dart';
+import '../core/network/api_client.dart';
 import '../models/dashboard_model.dart';
 
 class DashboardState {
@@ -36,6 +37,45 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     fetchSummary();
   }
 
+  String _friendlyError(DioException e, String fallback) {
+    final data = e.response?.data;
+    if (data is Map) {
+      final detail = data["detail"];
+      if (detail is String && detail.isNotEmpty) {
+        return detail;
+      }
+      if (detail is Map && detail["message"] is String) {
+        return detail["message"] as String;
+      }
+      if (detail is List && detail.isNotEmpty) {
+        final first = detail.first;
+        if (first is Map && first["msg"] is String) {
+          return first["msg"] as String;
+        }
+      }
+    }
+
+    // ApiClient's interceptor already puts a friendly message in e.error.
+    final friendly = e.error?.toString();
+    if (friendly != null &&
+        friendly.isNotEmpty &&
+        friendly !=
+            "Network error. Please check your internet connection.") {
+      return friendly;
+    }
+
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout) {
+      return "Request timed out. Please try again.";
+    }
+
+    if (e.type == DioExceptionType.connectionError) {
+      return "Cannot connect to the server. Please check your internet.";
+    }
+
+    return e.message ?? fallback;
+  }
+
   Future<void> fetchSummary({String? filter, int? days}) async {
     final effectiveDays = days ??
         (filter == "today"
@@ -44,6 +84,12 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
                 ? 30
                 : 7);
 
+    final filterRange = effectiveDays == 1
+        ? "today"
+        : effectiveDays == 30
+            ? "30_days"
+            : "7_days";
+
     state = state.copyWith(
       isLoading: true,
       errorMessage: null,
@@ -51,126 +97,33 @@ class DashboardNotifier extends StateNotifier<DashboardState> {
     );
 
     try {
-      final db = await LocalDatabase.database;
-      final session = await LocalStorage.getUserSession();
-      final shopId = session?["shop_id"] ?? 0;
-
-      final customers = await db.query(
-        "customers",
-        where: "shop_id = ? AND is_active = 1",
-        whereArgs: [shopId],
+      final response = await ApiClient.client.get(
+        ApiConstants.dashboardSummary,
+        queryParameters: {"filter_range": filterRange},
       );
 
-      final transactions = await db.query(
-        "transactions",
-        where: "shop_id = ?",
-        whereArgs: [shopId],
-        orderBy: "date DESC",
-      );
-
-      final now = DateTime.now();
-      final todayStart = DateTime(now.year, now.month, now.day);
-      final rangeStart =
-          todayStart.subtract(Duration(days: effectiveDays - 1));
-
-      double totalOutstanding = 0;
-      double todayCredit = 0;
-      double todayPayment = 0;
-
-      for (final customer in customers) {
-        totalOutstanding +=
-            (customer["credit_balance"] as num?)?.toDouble() ?? 0;
+      if (response.data is! Map) {
+        throw Exception("Invalid server response.");
       }
 
-      final recent = <RecentTransactionItemModel>[];
-
-      final daily = <String, Map<String, double>>{};
-
-      for (final tx in transactions) {
-        final date = DateTime.parse(tx["date"] as String);
-
-        final amount = (tx["amount"] as num?)?.toDouble() ?? 0;
-        final type = tx["transaction_type"] as String;
-        final customerName = tx["customer_name"] as String;
-
-        if (date.year == now.year &&
-            date.month == now.month &&
-            date.day == now.day) {
-          if (type == "CREDIT") {
-            todayCredit += amount;
-          } else if (type == "PAYMENT") {
-            todayPayment += amount;
-          }
-        }
-
-        if (!date.isBefore(rangeStart)) {
-          final key =
-              "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
-
-          daily.putIfAbsent(
-            key,
-            () => {
-              "credit": 0,
-              "payment": 0,
-            },
-          );
-
-          if (type == "CREDIT") {
-            daily[key]!["credit"] =
-                daily[key]!["credit"]! + amount;
-          } else if (type == "PAYMENT") {
-            daily[key]!["payment"] =
-                daily[key]!["payment"]! + amount;
-          }
-        }
-
-        if (recent.length < 10) {
-          recent.add(
-            RecentTransactionItemModel(
-              id: tx["id"] as int,
-              customerId: tx["customer_id"] as int,
-              customerName: customerName,
-              amount: amount,
-              transactionType: type,
-              date: date,
-              source: tx["source"] as String,
-            ),
-          );
-        }
-      }
-
-      final chart = daily.entries.map((entry) {
-        final credit = entry.value["credit"] ?? 0;
-        final payment = entry.value["payment"] ?? 0;
-
-        return ChartDataPointModel(
-          label: entry.key.substring(5),
-          credit: credit,
-          payment: payment,
-          net: credit - payment,
-        );
-      }).toList();
-
-      final summary = DashboardSummaryModel(
-        totalOutstanding: totalOutstanding,
-        todayCredit: todayCredit,
-        todayPayment: todayPayment,
-        totalCustomers: customers.length,
-        totalScans: 0,
-        pendingReviewsCount: 0,
-        recentTransactions: recent,
-        pendingReviews: const [],
-        trendChart: chart,
+      final summary = DashboardSummaryModel.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
       );
 
       state = state.copyWith(
         isLoading: false,
         summary: summary,
       );
+    } on DioException catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage:
+            _friendlyError(e, "Failed to load dashboard."),
+      );
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: e.toString(),
+        errorMessage: e.toString().replaceFirst("Exception: ", ""),
       );
     }
   }

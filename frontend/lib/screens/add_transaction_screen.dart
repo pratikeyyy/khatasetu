@@ -121,6 +121,15 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
         ),
       );
       context.pop();
+    } else if (mounted) {
+      final msg = ref.read(transactionProvider).errorMessage ??
+          "लेन-देन सहेजने में समस्या हुई। कृपया दोबारा जाँचें।";
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          backgroundColor: AppColors.creditRed,
+        ),
+      );
     }
   }
 
