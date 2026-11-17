@@ -96,17 +96,21 @@ RULES:
 # We intentionally use a cascade instead of hammering one model
 # repeatedly when Google's service returns 503.
 #
-# Higher-quality models are attempted first.
-# Lower-cost / lighter models are used only if necessary.
+# Light models go FIRST. On 2026-11-17 the heavier Flash models were
+# overloaded: gemini-3.8/3.7-flash returned 503 "high demand" and
+# gemini-3.6-flash hung ~90s per call (504), so a heavy-first cascade
+# took 5m25s before gemini-3.5-flash-lite finally succeeded. The lite
+# models answer handwritten khata rows in seconds and are tried first;
+# the heavier models are only fallbacks now.
 # ============================================================
 
 MODEL_CASCADE = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
 ]
 
 
@@ -314,19 +318,19 @@ class OCRService:
         """
         Production Gemini Vision call.
 
-        Cascade:
+        Cascade (lite models first, heavier models as fallbacks):
 
-            3.8 Flash
-                ↓
-            3.7 Flash
-                ↓
-            3.6 Flash
-                ↓
-            3.5 Flash
-                ↓
             3.5 Flash-Lite
                 ↓
             3.1 Flash-Lite
+                ↓
+            3.5 Flash
+                ↓
+            3.6 Flash
+                ↓
+            3.7 Flash
+                ↓
+            3.8 Flash
 
         No mock data is ever returned.
         """

@@ -97,6 +97,26 @@ def _build_scan_response(scan: Scan, db: Session, shop_id: int) -> ScanResponse:
     )
 
 
+def _mark_scan_failed(scan_id: int, message: str) -> None:
+    """Best-effort: mark a scan FAILED using a fresh session."""
+    import logging
+
+    logger = logging.getLogger("KhataSetu.OCR")
+    db = SessionLocal()
+    try:
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan is None:
+            return
+        scan.status = "FAILED"
+        scan.error_message = message
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Could not mark scan %s FAILED.", scan_id)
+    finally:
+        db.close()
+
+
 def _run_ocr_for_scan(scan_id: int, shop_id: int) -> None:
     """
     Background OCR worker.
@@ -112,23 +132,52 @@ def _run_ocr_for_scan(scan_id: int, shop_id: int) -> None:
     OCR now runs here, in the background, and the app polls
     GET /scans/{id} until the scan reaches REVIEW_NEEDED, CONFIRMED or
     FAILED. A slow Gemini call can delay one scan, never the server.
+
+    It also never holds a database session across the Gemini call: Neon
+    closes idle connections within minutes, so the session used to save
+    results is opened fresh AFTER OCR finishes (scan 3 died on this on
+    2026-11-17 even with pool_pre_ping on — pre-ping only checks the
+    connection at checkout, and the checkout happened before the call).
     """
     import logging
 
     logger = logging.getLogger("KhataSetu.OCR")
 
-    start_time = time.time()
+    # Phase 1: resolve the image path with a SHORT-LIVED session, then
+    # close it.
     db = SessionLocal()
     try:
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan is None:
             logger.warning("Background OCR: scan %s not found.", scan_id)
             return
-
         proc_path = scan.processed_image_path
+    finally:
+        db.close()
 
+    # Phase 2: OCR with NO database session held.
+    start_time = time.time()
+    try:
+        extraction = OCRService.extract_from_image(proc_path)
+    except Exception as e:
+        logger.error(
+            "Background OCR failed. Scan=%s Error=%s",
+            scan_id,
+            str(e),
+        )
+        _mark_scan_failed(scan_id, f"AI Vision error: {str(e)}")
+        return
+
+    # Phase 3: save the results with a FRESH session. One retry with
+    # another fresh session if the save itself hits a stale connection.
+    last_error: Optional[Exception] = None
+    for _save_attempt in range(2):
+        db = SessionLocal()
         try:
-            extraction = OCRService.extract_from_image(proc_path)
+            scan = db.query(Scan).filter(Scan.id == scan_id).first()
+            if scan is None:
+                logger.warning("Background OCR: scan %s not found.", scan_id)
+                return
             scan.raw_ai_response = extraction.model_dump_json()
 
             high_conf_count = 0
@@ -220,19 +269,26 @@ def _run_ocr_for_scan(scan_id: int, shop_id: int) -> None:
                 total_count,
                 scan.status,
             )
-
+            return
         except Exception as e:
+            last_error = e
             db.rollback()
-            scan.status = "FAILED"
-            scan.error_message = f"AI Vision error: {str(e)}"
-            db.commit()
-            logger.error(
-                "Background OCR failed. Scan=%s Error=%s",
+            logger.warning(
+                "Background OCR save failed (attempt %d/2). Scan=%s Error=%s",
+                _save_attempt + 1,
                 scan_id,
                 str(e),
             )
-    finally:
-        db.close()
+        finally:
+            db.close()
+
+    # Both save attempts failed.
+    logger.error(
+        "Background OCR failed. Scan=%s Error=%s",
+        scan_id,
+        str(last_error),
+    )
+    _mark_scan_failed(scan_id, f"AI Vision error: {last_error}")
 
 
 @router.post("/upload", response_model=ScanResponse, status_code=status.HTTP_201_CREATED)
