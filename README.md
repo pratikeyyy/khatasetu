@@ -1,13 +1,23 @@
 # KhataSetu — From Paper Khata to Smart Digital Khata
 
-KhataSetu is a modern ledger management application built specifically for Indian Kirana shop owners. It digitizes handwritten paper khatas using AI Vision OCR (Gemini 1.5), manages customer balances securely, and sends deep-link reminders via WhatsApp.
+KhataSetu is a modern ledger management application built specifically for Indian Kirana shop owners. It digitizes handwritten paper khatas using AI Vision OCR, manages customer balances securely, and sends deep-link reminders via WhatsApp.
+
+## 🔴 Live
+
+- **Backend API:** https://khatasetu.onrender.com/
+- **Web app:** https://pratikeyyy.github.io/khatasetu/
+- **Android APK:** https://github.com/pratikeyyy/khatasetu/releases/download/v1.0.0/app-release.apk
+
+## 📦 What it does in production
+
+Flutter app + FastAPI backend + Neon Postgres, with JWT/bcrypt auth. A shopkeeper photographs a paper khata page and Gemini Vision OCR extracts the ledger entries (customer names, amounts, dates) in ~20 seconds — verified end-to-end on the live backend — with fuzzy name matching and a review step before entries are saved. WhatsApp reminders go out from the ledger, and the app stays logged in across restarts.
 
 ## 🏗 Architecture & Tech Stack
 - **Frontend**: Flutter (Mobile: Android, Web)
 - **Backend**: FastAPI (Python 3.12+)
 - **Database**: PostgreSQL (Production) / SQLite (Local Development)
-- **AI/OCR**: Google Gemini 1.5 Flash Vision (via GenAI SDK)
-- **Image Storage**: Cloud Object Storage (e.g., S3/GCS) in Production, Local `./uploads` in Development.
+- **AI/OCR**: Google Gemini Vision (lite-first model cascade: gemini-3.5-flash-lite → gemini-3.1-flash-lite → gemini-3.5/3.6/3.7/3.8-flash, via GenAI SDK)
+- **Image Storage**: Local `./uploads` directory.
 
 ## ✨ Features & Supported Platforms
 - **AI Scan & OCR**: Upload photos of handwritten ledgers to auto-extract customer names, amounts, and dates.
@@ -16,12 +26,6 @@ KhataSetu is a modern ledger management application built specifically for India
 - **Supported Platforms**: 
   - Android (APK)
   - Web (Flutter Web)
-
-## 📸 Screenshots
-*(Please add screenshots here)*
-- [Placeholder: Dashboard Screenshot]
-- [Placeholder: AI Scan Result Screenshot]
-- [Placeholder: Customer Details Screenshot]
 
 ## 🛠 Local Development Setup
 
@@ -50,7 +54,7 @@ KhataSetu is a modern ledger management application built specifically for India
 ## 🔐 Required Environment Variables
 Create a `.env` file in the `backend` directory with the following variables:
 - `APP_ENV`: Environment (e.g., `development` or `production`).
-- `DATABASE_URL`: Connection string (e.g., `postgresql://user:pass@host/db`).
+- `DATABASE_URL`: PostgreSQL connection string.
 - `JWT_SECRET`: A secure, random string (Required for production).
 - `CORS_ORIGINS`: Comma-separated list of allowed origins.
 - `GEMINI_API_KEY`: API Key for Google Gemini Vision.
@@ -81,7 +85,7 @@ We use **Alembic** for database migrations.
      flutter build web --release --dart-define=API_URL=https://khatasetu.onrender.com/api/v1
      ```
    - Deploy the generated `build/web` folder to any static hosting provider (e.g., Render, Firebase Hosting, Vercel).
-3. **Storage**: Configure a cloud storage bucket (S3, GCS, Firebase) for handling image uploads. Local file storage is ephemeral on platforms like Render and will lead to data loss.
+3. **Storage**: Uploads are stored locally (`./uploads`). On ephemeral hosts like Render they do not survive restarts — a cloud bucket (S3/GCS) is the durable option.
 
 ## 📖 API Documentation
 Once the backend is running, visit the interactive API documentation at:
