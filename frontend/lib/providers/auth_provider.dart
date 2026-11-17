@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 
@@ -341,13 +343,19 @@ class AuthNotifier extends StateNotifier<AuthState> {
   // ============================================================
   // CHECK SAVED SESSION
   // ============================================================
+  //
+  // THIS USED TO BE THE LOGIN-LOOP BUG (fixed 2026-11-17): nothing ever
+  // called this method. The splash screen only read the fresh
+  // AuthState (isAuthenticated: false), so every app restart went to
+  // the login screen even though a valid token sat in storage.
+  //
+  // It now restores the session INSTANTLY from local storage — no
+  // network wait on the splash screen. The token is then validated in
+  // the background (fetchMe); only a 401 logs the user out. A slow or
+  // sleeping server must never look like a dead session again.
+  // ============================================================
 
   Future<bool> checkSavedSession() async {
-    state = state.copyWith(
-      isLoading: true,
-      errorMessage: null,
-    );
-
     try {
       // Only restore a session when the user explicitly selected Remember Me.
       final rememberMe = await LocalStorage.getRememberMe();
@@ -360,7 +368,8 @@ class AuthNotifier extends StateNotifier<AuthState> {
         return false;
       }
 
-      final token = await LocalStorage.getToken();
+      final session = await LocalStorage.getUserSession();
+      final token = session?["token"] as String?;
 
       if (token == null ||
           token.isEmpty ||
@@ -375,37 +384,31 @@ class AuthNotifier extends StateNotifier<AuthState> {
         return false;
       }
 
-      final response = await ApiClient.client.get(
-        ApiConstants.me,
-        options: Options(
-          headers: {
-            "Authorization": "Bearer $token",
-          },
-        ),
+      // Restore instantly from the saved session. The stored profile
+      // fields are enough for the home screen until the background
+      // validation below refreshes the full profile.
+      state = state.copyWith(
+        isLoading: false,
+        isAuthenticated: true,
+        user: {
+          "full_name": session?["owner_name"] ?? "Shopkeeper",
+          "email": session?["email"] ?? "",
+          "phone": session?["phone"] ?? "",
+        },
+        shop: {
+          "name": session?["shop_name"] ?? "My Khata",
+          "phone": session?["phone"] ?? "",
+        },
+        errorMessage: null,
       );
 
-      if (response.data is! Map) {
-        throw Exception("Invalid session response.");
-      }
-
-      final data =
-          Map<String, dynamic>.from(response.data as Map);
-
-      _applyServerData(data);
+      // Validate the token in the background. fetchMe() clears the
+      // session and flips isAuthenticated to false on a 401, and the
+      // app listens for that and routes back to login.
+      unawaited(fetchMe());
 
       return true;
-    } on DioException {
-      await LocalStorage.clearSession();
-
-      state = const AuthState(
-        isLoading: false,
-        isAuthenticated: false,
-      );
-
-      return false;
     } catch (_) {
-      await LocalStorage.clearSession();
-
       state = const AuthState(
         isLoading: false,
         isAuthenticated: false,

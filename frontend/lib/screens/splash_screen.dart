@@ -20,7 +20,17 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   }
 
   Future<void> _checkNavigation() async {
-    await Future.delayed(const Duration(milliseconds: 1500));
+    // Restore the saved login FIRST. checkSavedSession() restores
+    // instantly from local storage (no network wait) and validates
+    // the token in the background — without this call the app went to
+    // the login screen on every restart even with a valid token saved.
+    final sessionFuture =
+        ref.read(authProvider.notifier).checkSavedSession();
+
+    await Future.wait([
+      sessionFuture,
+      Future.delayed(const Duration(milliseconds: 1500)),
+    ]);
     if (!mounted) return;
 
     final auth = ref.read(authProvider);

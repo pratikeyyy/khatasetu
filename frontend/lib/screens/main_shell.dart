@@ -21,6 +21,13 @@ class MainShell extends StatelessWidget {
               width: 1,
             ),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(isDark ? 0.25 : 0.06),
+              blurRadius: 16,
+              offset: const Offset(0, -4),
+            ),
+          ],
         ),
         child: NavigationBar(
           selectedIndex: navigationShell.currentIndex,

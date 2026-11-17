@@ -58,22 +58,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: isDark
-                            ? [const Color(0xFF131B2E), const Color(0xFF1E293B)]
-                            : [Colors.white, const Color(0xFFF1F5F9)],
+                      // Rich brand gradient — the first thing the user
+                      // sees every day, so it carries the brand instead
+                      // of looking like a plain white card.
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF0F766E), Color(0xFF115E59), Color(0xFF134E4A)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-                      ),
+                      borderRadius: BorderRadius.circular(22),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(isDark ? 0.2 : 0.03),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
+                          color: AppColors.primary.withOpacity(isDark ? 0.25 : 0.30),
+                          blurRadius: 18,
+                          offset: const Offset(0, 8),
                         ),
                       ],
                     ),
@@ -84,10 +82,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           width: 48,
                           height: 48,
                           decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                              colors: [AppColors.primary, AppColors.primaryLight],
-                            ),
+                            color: Colors.white.withOpacity(0.16),
                             borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.25),
+                              width: 1,
+                            ),
                           ),
                           child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 26),
                         ),
@@ -98,29 +98,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             children: [
                               Text(
                                 greeting,
-                                style: const TextStyle(fontSize: 12, color: AppColors.textMuted, fontWeight: FontWeight.w600),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white.withOpacity(0.75),
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 auth.ownerName.isNotEmpty ? auth.ownerName : "दुकानदार (Shopkeeper)",
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 19,
                                   fontWeight: FontWeight.w900,
-                                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                                  color: Colors.white,
                                 ),
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 2),
                               Row(
                                 children: [
-                                  const Icon(Icons.verified_rounded, size: 14, color: AppColors.primary),
+                                  const Icon(Icons.verified_rounded, size: 14, color: AppColors.saffron),
                                   const SizedBox(width: 4),
                                   Expanded(
                                     child: Text(
                                       auth.shopName.isNotEmpty ? auth.shopName : "मेरी किराना दुकान",
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 12,
-                                        color: AppColors.primary,
+                                        color: Colors.white.withOpacity(0.85),
                                         fontWeight: FontWeight.w700,
                                       ),
                                       overflow: TextOverflow.ellipsis,
@@ -142,18 +146,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFEF3C7),
+                                color: Colors.white.withOpacity(0.16),
                                 borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: const Color(0xFFFDE68A)),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.30),
+                                ),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.pending_actions_rounded, size: 14, color: Color(0xFFB45309)),
+                                  const Icon(Icons.pending_actions_rounded, size: 14, color: Color(0xFFFCD34D)),
                                   const SizedBox(width: 4),
                                   Text(
                                     "${dashState.summary!.pendingReviewsCount} जाँच",
-                                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: Color(0xFFB45309)),
+                                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: Colors.white),
                                   ),
                                 ],
                               ),
