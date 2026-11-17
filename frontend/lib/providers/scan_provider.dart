@@ -123,6 +123,10 @@ class ScanNotifier extends StateNotifier<ScanState> {
       );
 
       // Explicitly attach the REAL JWT.
+      // Long receive timeout: on the free server the first request can
+      // take a while to wake the backend up. The OCR itself now runs in
+      // the background on the server, so the upload returns fast once
+      // the server is awake; we then poll for the result below.
       final resp = await ApiClient.client.post(
         ApiConstants.uploadScan,
         data: formData,
@@ -131,20 +135,88 @@ class ScanNotifier extends StateNotifier<ScanState> {
             "Authorization": "Bearer $token",
             "Content-Type": "multipart/form-data",
           },
+          receiveTimeout: const Duration(seconds: 120),
+          connectTimeout: const Duration(seconds: 30),
         ),
       );
+
+      var data = Map<String, dynamic>.from(
+        resp.data as Map,
+      );
+
+      var scan = ScanModel.fromJson(data);
+
+      // OCR runs in the background on the server now (it used to run
+      // inside the upload request, which took longer than the app's
+      // 30s timeout and even crashed the server). Poll the scan until
+      // it finishes (REVIEW_NEEDED / CONFIRMED) or fails.
+      // 50 attempts x 3s = up to ~2.5 minutes.
+      if (scan.status == "PROCESSING" ||
+          scan.status == "UPLOADED") {
+        const maxAttempts = 50;
+        var finished = false;
+
+        for (var attempt = 0;
+            attempt < maxAttempts;
+            attempt++) {
+          await Future.delayed(
+            const Duration(seconds: 3),
+          );
+
+          final polled = await _fetchScanJson(
+            scan.id,
+            token,
+          );
+          if (polled == null) {
+            continue;
+          }
+
+          data = polled;
+          scan = ScanModel.fromJson(data);
+
+          if (scan.status == "REVIEW_NEEDED" ||
+              scan.status == "CONFIRMED" ||
+              scan.status == "PARTIAL_CONFIRMED") {
+            finished = true;
+            break;
+          }
+
+          if (scan.status == "FAILED") {
+            state = state.copyWith(
+              step: ScanProcessingStep.error,
+              errorMessage: scan.errorMessage ??
+                  "We couldn't read this page clearly. Try taking the photo in better lighting and keeping the page flat.",
+            );
+            return null;
+          }
+        }
+
+        if (!finished) {
+          // Still processing after ~2.5 minutes. The server keeps
+          // working in the background; the result lands in history.
+          state = state.copyWith(
+            step: ScanProcessingStep.error,
+            errorMessage:
+                "AI is still reading this page. It will appear in Scan History in a few moments.",
+          );
+          return null;
+        }
+      }
+
+      if (scan.status == "FAILED") {
+        state = state.copyWith(
+          step: ScanProcessingStep.error,
+          errorMessage: scan.errorMessage ??
+              "We couldn't read this page clearly. Try taking the photo in better lighting and keeping the page flat.",
+        );
+        return null;
+      }
 
       state = state.copyWith(
         step: ScanProcessingStep.validating,
         statusMessage:
             "Validating confidence scores and ledger matching...",
       );
-
-      final data = Map<String, dynamic>.from(
-        resp.data as Map,
-      );
-
-      final scan = ScanModel.fromJson(data);
 
       await _saveScanToLocalCache(data);
 
@@ -194,6 +266,32 @@ class ScanNotifier extends StateNotifier<ScanState> {
         errorMessage: e.toString(),
       );
 
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // FETCH ONE SCAN (RAW JSON) — USED BY THE UPLOAD POLLING LOOP
+  // ---------------------------------------------------------------------------
+
+  Future<Map<String, dynamic>?> _fetchScanJson(
+    int scanId,
+    String token,
+  ) async {
+    try {
+      final resp = await ApiClient.client.get(
+        "${ApiConstants.scans}$scanId",
+        options: Options(
+          headers: {
+            "Authorization": "Bearer $token",
+          },
+        ),
+      );
+
+      return Map<String, dynamic>.from(
+        resp.data as Map,
+      );
+    } catch (_) {
       return null;
     }
   }

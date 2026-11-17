@@ -20,6 +20,12 @@ if settings.DATABASE_URL.startswith("sqlite"):
 engine = create_engine(
     _DATABASE_URL,
     connect_args=connect_args,
+    # Neon closes idle connections after a few minutes; without this the
+    # first request on a stale pooled connection fails with
+    # "SSL connection has been closed unexpectedly" (seen 2026-11-17 on
+    # POST /auth/register). pool_pre_ping tests the connection before use
+    # and reconnects transparently.
+    pool_pre_ping=True,
     echo=settings.DEBUG if settings.APP_ENV == "development" else False,
 )
 

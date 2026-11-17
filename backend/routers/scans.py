@@ -2,13 +2,13 @@ import os
 import json
 import time
 import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from typing import List, Optional
 
 from backend.config import settings
-from backend.database import get_db
+from backend.database import SessionLocal, get_db
 from backend.models.scan import Scan, ScanEntry
 from backend.models.customer import Customer
 from backend.models.transaction import Transaction
@@ -97,8 +97,147 @@ def _build_scan_response(scan: Scan, db: Session, shop_id: int) -> ScanResponse:
     )
 
 
+def _run_ocr_for_scan(scan_id: int, shop_id: int) -> None:
+    """
+    Background OCR worker.
+
+    Plain sync function, so Starlette runs it in a threadpool and the
+    event loop stays free for health checks and other requests.
+
+    WHY THIS EXISTS (2026-11-17 incident): the Gemini Vision call used to
+    run inline inside the upload request. When Gemini stalled, the single
+    uvicorn worker's event loop blocked for 40+ seconds, Render's health
+    check timed out, the instance was killed, the upload died with a 502,
+    and the app showed "Request timed out" (its receive timeout is 30s).
+    OCR now runs here, in the background, and the app polls
+    GET /scans/{id} until the scan reaches REVIEW_NEEDED, CONFIRMED or
+    FAILED. A slow Gemini call can delay one scan, never the server.
+    """
+    import logging
+
+    logger = logging.getLogger("KhataSetu.OCR")
+
+    start_time = time.time()
+    db = SessionLocal()
+    try:
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan is None:
+            logger.warning("Background OCR: scan %s not found.", scan_id)
+            return
+
+        proc_path = scan.processed_image_path
+
+        try:
+            extraction = OCRService.extract_from_image(proc_path)
+            scan.raw_ai_response = extraction.model_dump_json()
+
+            high_conf_count = 0
+            total_count = 0
+
+            for raw in extraction.entries:
+                # Skip empty entries where both name and amount are missing
+                if not raw.customer_name and not raw.amount:
+                    continue
+
+                total_count += 1
+
+                # Parse date or mark as inferred from scan date
+                entry_date = None
+                is_inferred = False
+                if raw.date:
+                    try:
+                        # Attempt ISO parse or standard DD/MM/YYYY
+                        if "-" in raw.date:
+                            parts = raw.date.split("-")
+                            if len(parts[0]) == 4:  # YYYY-MM-DD
+                                entry_date = datetime.datetime.strptime(raw.date, "%Y-%m-%d")
+                            else:  # DD-MM-YYYY
+                                entry_date = datetime.datetime.strptime(raw.date, "%d-%m-%Y")
+                        elif "/" in raw.date:
+                            entry_date = datetime.datetime.strptime(raw.date, "%d/%m/%Y")
+                    except Exception:
+                        entry_date = datetime.datetime.utcnow()
+                        is_inferred = True
+                else:
+                    entry_date = datetime.datetime.utcnow()
+                    is_inferred = True
+
+                # Evaluate confidence and band
+                overall_conf, conf_band = ConfidenceService.evaluate_entry(
+                    name_conf=raw.confidence.customer_name,
+                    amount_conf=raw.confidence.amount,
+                    date_conf=raw.confidence.date if not is_inferred else 0.50,
+                    type_conf=raw.confidence.transaction_type,
+                )
+
+                if conf_band == "HIGH":
+                    high_conf_count += 1
+
+                # Fuzzy match candidate search
+                clean_name = (raw.customer_name or "Unknown").strip()
+                norm_name = MatchingService.normalize_name(clean_name)
+                matched_customer = db.query(Customer).filter(
+                    Customer.shop_id == shop_id,
+                    Customer.normalized_name == norm_name,
+                    Customer.is_active == True,
+                ).first()
+
+                if not matched_customer:
+                    fuzzy = MatchingService.best_fuzzy_match(
+                        db=db, shop_id=shop_id, extracted_name=clean_name, threshold=0.75
+                    )
+                    if fuzzy:
+                        matched_customer, _score = fuzzy
+
+                scan_entry = ScanEntry(
+                    scan_id=scan.id,
+                    matched_customer_id=matched_customer.id if matched_customer else None,
+                    extracted_customer_name=clean_name,
+                    extracted_amount=float(raw.amount or 0.0),
+                    extracted_date=entry_date,
+                    extracted_type=(raw.transaction_type or "CREDIT").upper(),
+                    raw_text=raw.raw_text,
+                    confidence_customer_name=raw.confidence.customer_name,
+                    confidence_amount=raw.confidence.amount,
+                    confidence_date=raw.confidence.date,
+                    confidence_type=raw.confidence.transaction_type,
+                    confidence_overall=overall_conf,
+                    confidence_band=conf_band,
+                    is_date_inferred=is_inferred,
+                    status="PENDING",
+                )
+                db.add(scan_entry)
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            scan.processing_time_ms = duration_ms
+            scan.total_entries = total_count
+            scan.high_confidence_entries = high_conf_count
+            scan.status = "REVIEW_NEEDED" if total_count > 0 else "CONFIRMED"
+            db.commit()
+            logger.info(
+                "Background OCR done. Scan=%s Entries=%d Status=%s",
+                scan_id,
+                total_count,
+                scan.status,
+            )
+
+        except Exception as e:
+            db.rollback()
+            scan.status = "FAILED"
+            scan.error_message = f"AI Vision error: {str(e)}"
+            db.commit()
+            logger.error(
+                "Background OCR failed. Scan=%s Error=%s",
+                scan_id,
+                str(e),
+            )
+    finally:
+        db.close()
+
+
 @router.post("/upload", response_model=ScanResponse, status_code=status.HTTP_201_CREATED)
 async def upload_scan(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     shop: Shop = Depends(get_current_shop),
@@ -118,8 +257,6 @@ async def upload_scan(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Image size exceeds the {settings.MAX_IMAGE_SIZE_MB}MB limit.",
         )
-
-    start_time = time.time()
 
     # 2. Process image (EXIF fix, contrast enhancement, thumbnail)
     try:
@@ -145,106 +282,12 @@ async def upload_scan(
     db.commit()
     db.refresh(scan)
 
-    # 4. Invoke OCR Service
-    try:
-        extraction = OCRService.extract_from_image(proc_path)
-        scan.raw_ai_response = extraction.model_dump_json()
-
-        high_conf_count = 0
-        total_count = 0
-
-        for raw in extraction.entries:
-            # Skip empty entries where both name and amount are missing
-            if not raw.customer_name and not raw.amount:
-                continue
-
-            total_count += 1
-
-            # Parse date or mark as inferred from scan date
-            entry_date = None
-            is_inferred = False
-            if raw.date:
-                try:
-                    # Attempt ISO parse or standard DD/MM/YYYY
-                    if "-" in raw.date:
-                        parts = raw.date.split("-")
-                        if len(parts[0]) == 4:  # YYYY-MM-DD
-                            entry_date = datetime.datetime.strptime(raw.date, "%Y-%m-%d")
-                        else:  # DD-MM-YYYY
-                            entry_date = datetime.datetime.strptime(raw.date, "%d-%m-%Y")
-                    elif "/" in raw.date:
-                        entry_date = datetime.datetime.strptime(raw.date, "%d/%m/%Y")
-                except Exception:
-                    entry_date = datetime.datetime.utcnow()
-                    is_inferred = True
-            else:
-                entry_date = datetime.datetime.utcnow()
-                is_inferred = True
-
-            # Evaluate confidence and band
-            overall_conf, conf_band = ConfidenceService.evaluate_entry(
-                name_conf=raw.confidence.customer_name,
-                amount_conf=raw.confidence.amount,
-                date_conf=raw.confidence.date if not is_inferred else 0.50,
-                type_conf=raw.confidence.transaction_type,
-            )
-
-            if conf_band == "HIGH":
-                high_conf_count += 1
-
-            # Fuzzy match candidate search
-            clean_name = (raw.customer_name or "Unknown").strip()
-            norm_name = MatchingService.normalize_name(clean_name)
-            matched_customer = db.query(Customer).filter(
-                Customer.shop_id == shop.id,
-                Customer.normalized_name == norm_name,
-                Customer.is_active == True,
-            ).first()
-
-            if not matched_customer:
-                fuzzy = MatchingService.best_fuzzy_match(
-                    db=db, shop_id=shop.id, extracted_name=clean_name, threshold=0.75
-                )
-                if fuzzy:
-                    matched_customer, _score = fuzzy
-
-            scan_entry = ScanEntry(
-                scan_id=scan.id,
-                matched_customer_id=matched_customer.id if matched_customer else None,
-                extracted_customer_name=clean_name,
-                extracted_amount=float(raw.amount or 0.0),
-                extracted_date=entry_date,
-                extracted_type=(raw.transaction_type or "CREDIT").upper(),
-                raw_text=raw.raw_text,
-                confidence_customer_name=raw.confidence.customer_name,
-                confidence_amount=raw.confidence.amount,
-                confidence_date=raw.confidence.date,
-                confidence_type=raw.confidence.transaction_type,
-                confidence_overall=overall_conf,
-                confidence_band=conf_band,
-                is_date_inferred=is_inferred,
-                status="PENDING",
-            )
-            db.add(scan_entry)
-
-        duration_ms = int((time.time() - start_time) * 1000)
-        scan.processing_time_ms = duration_ms
-        scan.total_entries = total_count
-        scan.high_confidence_entries = high_conf_count
-        scan.status = "REVIEW_NEEDED" if total_count > 0 else "CONFIRMED"
-        db.commit()
-        db.refresh(scan)
-
-    except Exception as e:
-        db.rollback()
-        scan.status = "FAILED"
-        scan.error_message = f"AI Vision error: {str(e)}"
-        db.commit()
-        db.refresh(scan)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="We couldn't read this page clearly. Try taking the photo in better lighting and keeping the page flat.",
-        )
+    # 4. Hand the slow Gemini OCR to a background thread and return at
+    # once (201, status PROCESSING). The app polls GET /scans/{id} until
+    # the scan is REVIEW_NEEDED, CONFIRMED or FAILED. This keeps the
+    # upload fast even when Gemini takes a minute, and a stalled Gemini
+    # call can no longer block the server's event loop.
+    background_tasks.add_task(_run_ocr_for_scan, scan.id, shop.id)
 
     return _build_scan_response(scan, db, shop.id)
 
